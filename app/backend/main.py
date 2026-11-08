@@ -255,8 +255,9 @@ if os.path.isdir(_assets):
     app.mount("/assets", StaticFiles(directory=_assets), name="assets")
 
 # Archivos de la raíz del build (service worker, manifest, íconos) — lista blanca
-_RAIZ = {"sw.js", "manifest.webmanifest", "registerSW.js", "favicon.svg", "icono-192.png",
-         "icono-512.png", "icono-maskable-512.png", "apple-touch-icon.png"}
+_RAIZ = {"sw.js", "manifest.webmanifest", "registerSW.js", "favicon.svg", "favicon.ico",
+         "pwa-64x64.png", "pwa-192x192.png", "pwa-512x512.png", "maskable-icon-512x512.png",
+         "apple-touch-icon-180x180.png"}
 
 
 @app.get("/{path:path}", include_in_schema=False)
@@ -266,7 +267,8 @@ def spa(path: str):
         if os.path.isfile(archivo):
             # El service worker nunca debe quedar cacheado por el navegador
             headers = {"Cache-Control": "no-cache"} if path in ("sw.js", "registerSW.js") else None
-            return FileResponse(archivo, headers=headers)
+            media = "application/manifest+json" if path.endswith(".webmanifest") else None
+            return FileResponse(archivo, headers=headers, media_type=media)
         raise HTTPException(404)
     if path.startswith("api/"):
         raise HTTPException(404)

@@ -144,3 +144,9 @@ def test_outbox_publica_y_reintenta(client, monkeypatch):
 @pytest.mark.parametrize("campo,valor", [("tipo_gasto", "Otro"), ("moneda", "EUR"), ("metodo_pago", "Cheque")])
 def test_enums_invalidos_422(client, campo, valor):
     assert client.post("/api/gastos", json=gasto(**{campo: valor})).status_code == 422
+
+
+def test_rutas_spa_y_api_desconocida(client):
+    assert client.get("/api/no-existe").status_code == 404
+    assert client.get("/../../etc/passwd").status_code == 404  # sin frontend compilado ni traversal
+    assert client.get("/workbox-../../config.py").status_code == 404
