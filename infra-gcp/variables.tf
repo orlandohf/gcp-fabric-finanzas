@@ -66,6 +66,16 @@ variable "gemini_location" {
 }
 
 # --- Secretos externos (opcionales en el primer apply; se guarda "PENDIENTE") ---
+variable "fabric_entorno" {
+  description = "Workspace de Fabric que recibe los eventos de producción (prd = finanzas-prd, test = test_wt)."
+  type        = string
+  default     = "prd"
+  validation {
+    condition     = contains(["prd", "test"], var.fabric_entorno)
+    error_message = "fabric_entorno debe ser prd o test."
+  }
+}
+
 variable "fabric_eventstream_connection_string" {
   description = "Cadena de conexión del Custom Endpoint de Fabric Eventstream (Event Hubs)."
   type        = string
