@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { cola, esReintentable, sincronizar } from "./cola.js";
 import Formulario from "./Formulario.jsx";
-import { api, fmt, nuevoId, store } from "./lib.js";
+import { IcoAyuda, IcoCamara, IcoCobrar, IcoInicio, IcoMas, IcoNube, IcoResumen, IcoSalir } from "./iconos.jsx";
+import { agruparPorDia, api, etiquetaDia, fmt, mesLima, metaCategoria, nuevoId, store } from "./lib.js";
 import PorCobrar from "./PorCobrar.jsx";
 import Resumen from "./Resumen.jsx";
-import Stat from "./Stat.jsx";
+import Sheet from "./Sheet.jsx";
 import Tutorial from "./Tutorial.jsx";
 
 export default function App() {
@@ -15,27 +16,38 @@ export default function App() {
   useEffect(() => {
     api("/api/me").then(setUser).catch((e) => {
       // Sin red pero con sesión previa: dejar usar la app (cola offline)
-      setUser(e.status === undefined && store.get("sesion_email") ? { email: store.get("sesion_email"), offline: true } : null);
+      const email = store.get("sesion_email");
+      setUser(e.status === undefined && email ? { email, nombre: store.get("sesion_nombre") || "", offline: true } : null);
     });
   }, []);
 
-  useEffect(() => { if (user?.email && !user.offline) store.set("sesion_email", user.email); }, [user]);
+  useEffect(() => {
+    if (user?.email && !user.offline) { store.set("sesion_email", user.email); store.set("sesion_nombre", user.nombre || ""); }
+  }, [user]);
 
-  if (user === undefined) return <div className="center muted">Cargando…</div>;
+  if (user === undefined) return <div className="pantalla-carga"><div className="logo pulso">S/</div></div>;
   if (!user) return <Login error={error} />;
   return <Panel user={user} />;
 }
 
 function Login({ error }) {
   return (
-    <div className="center">
-      <div className="card login">
+    <div className="login-fondo">
+      <div className="login">
         <div className="logo">S/</div>
         <h1>Mis Gastos</h1>
-        <p className="muted">Registro personal de gastos</p>
+        <p>Registra en segundos, entiende a dónde va tu plata y ahorra con ayuda de IA.</p>
+        <ul className="login-puntos">
+          <li>📷 Escanea el voucher y listo</li>
+          <li>🐜 Detecta tus gastos hormiga</li>
+          <li>🤝 Lleva la cuenta de lo compartido</li>
+        </ul>
         {error === "denegado" && <p className="alert">Esta cuenta no tiene acceso.</p>}
         {error === "oauth" && <p className="alert">No se pudo iniciar sesión. Intenta otra vez.</p>}
-        <a className="btn primary block" href="/auth/login">Entrar con Google</a>
+        <a className="btn blanco block grande" href="/auth/login">
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+          Entrar con Google
+        </a>
       </div>
     </div>
   );
@@ -45,8 +57,8 @@ function AvisoActualizacion() {
   const { needRefresh: [hayNueva, setHayNueva], updateServiceWorker } = useRegisterSW();
   if (!hayNueva) return null;
   return (
-    <div className="toast" role="status">
-      <span>Hay una nueva versión de la app.</span>
+    <div className="toast fijo" role="status">
+      <span>✨ Hay una nueva versión de la app.</span>
       <div className="acciones">
         <button className="btn ghost small" onClick={() => setHayNueva(false)}>Luego</button>
         <button className="btn primary small" onClick={() => updateServiceWorker(true)}>Actualizar</button>
@@ -55,17 +67,109 @@ function AvisoActualizacion() {
   );
 }
 
+function Toast({ aviso, onCerrar }) {
+  useEffect(() => {
+    if (!aviso || aviso.tipo === "error") return;
+    const t = setTimeout(onCerrar, 4500);
+    return () => clearTimeout(t);
+  }, [aviso, onCerrar]);
+  if (!aviso) return null;
+  return (
+    <div className={`toast ${aviso.tipo}`} role={aviso.tipo === "error" ? "alert" : "status"}>
+      <span>{aviso.texto}</span>
+      <button className="btn ghost small" onClick={onCerrar} aria-label="Cerrar aviso">OK</button>
+    </div>
+  );
+}
+
+function Hero({ kpis, bdDisponible }) {
+  const pen = kpis?.PEN;
+  const pctHormiga = pen?.total ? Math.round((pen.hormiga / pen.total) * 100) : 0;
+  return (
+    <section className="hero" aria-label="Resumen del mes">
+      <div className="hero-top">
+        <span>Gasto real de {mesLima()}</span>
+        {!bdDisponible && <span className="hero-chip"><IcoNube size={14} /> Modo sin conexión</span>}
+      </div>
+      {kpis ? <strong className="hero-monto">{fmt(pen.total)}</strong> : <span className="skeleton hero-skel" />}
+      <div className="hero-metricas">
+        <div>
+          <span>Hormiga</span>
+          <strong>{kpis ? fmt(pen.hormiga) : "—"}</strong>
+          <div className="barra-mini" aria-label={`${pctHormiga}% del gasto`}><span style={{ width: `${Math.min(pctHormiga, 100)}%` }} /></div>
+        </div>
+        <div>
+          <span>Por cobrar</span>
+          <strong>{kpis ? fmt(pen.por_cobrar) : "—"}</strong>
+        </div>
+        <div>
+          <span>En dólares</span>
+          <strong>{kpis ? fmt(kpis.USD.total, "USD") : "—"}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FilaGasto({ g, onClick, enCola }) {
+  const m = metaCategoria(g.categoria);
+  const contenido = (
+    <>
+      <span className="avatar-cat" style={{ "--h": m.h }} aria-hidden="true">{m.emoji}</span>
+      <span className="fila-texto">
+        <strong>{g.concepto}</strong>
+        <span className="muted small">
+          {g.categoria} · {g.metodo_pago}{g.entidad_financiera && ` · ${g.entidad_financiera}`}
+        </span>
+        <span className="tags">
+          {g.tipo_gasto === "Variable Hormiga" && <span className="tag warn">🐜 Hormiga</span>}
+          {g.es_compartido && <span className="tag">🤝 Tu parte {fmt(g.monto_propio, g.moneda)}</span>}
+          {enCola && <span className="tag warn">📱 Por enviar</span>}
+          {g.fabric_pendiente && <span className="tag muted" title="Aún no llega a Fabric; se reintenta solo">⟳ Sin sincronizar</span>}
+        </span>
+      </span>
+      <span className="fila-monto">
+        <strong>{fmt(g.monto_total, g.moneda)}</strong>
+        {g.cantidad > 1 && <span className="muted small">× {g.cantidad}</span>}
+      </span>
+    </>
+  );
+  return enCola
+    ? <li className="fila en-cola">{contenido}</li>
+    : <li><button className="fila" onClick={onClick} aria-label={`Editar ${g.concepto}`}>{contenido}</button></li>;
+}
+
+function ListaSkeleton() {
+  return (
+    <ul className="lista" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <li key={i} className="fila"><span className="skeleton avatar-cat" /><span className="fila-texto"><span className="skeleton linea" /><span className="skeleton linea corta" /></span></li>
+      ))}
+    </ul>
+  );
+}
+
+const TABS = [
+  { id: "inicio", txt: "Inicio", Ico: IcoInicio },
+  { id: "cobrar", txt: "Por cobrar", Ico: IcoCobrar },
+  { id: "resumen", txt: "Resumen", Ico: IcoResumen },
+];
+
 function Panel({ user }) {
-  const [gastos, setGastos] = useState([]);
+  const [gastos, setGastos] = useState(null);
   const [enCola, setEnCola] = useState([]);
   const [kpis, setKpis] = useState(null);
   const [bdDisponible, setBdDisponible] = useState(true);
   const [aviso, setAviso] = useState(null);
-  const [tab, setTab] = useState("registrar");
-  const [editando, setEditando] = useState(null);
+  const [tab, setTab] = useState("inicio");
+  const [hoja, setHoja] = useState(null); // null | {modo: "nuevo"|"editar", gasto?, archivo?}
+  const [menu, setMenu] = useState(false);
   const [tutorial, setTutorial] = useState(() => !store.get("tutorial_v2"));
+  const fotoRef = useRef(null);
 
   const cerrarTutorial = useCallback(() => { store.set("tutorial_v2", "1"); setTutorial(false); }, []);
+  const cerrarAviso = useCallback(() => setAviso(null), []);
+  const cerrarHoja = useCallback(() => setHoja(null), []);
 
   const recargar = useCallback(async () => {
     setEnCola(await cola.listar().catch(() => []));
@@ -73,20 +177,18 @@ function Panel({ user }) {
       const [g, k] = await Promise.all([api("/api/gastos"), api("/api/kpis/mes")]);
       setGastos(g); setKpis(k); setBdDisponible(true);
     } catch (e) {
+      if (e.status === 401) return location.reload();
       setBdDisponible(false);
-      if (e.status === 401) location.reload();
+      setGastos((prev) => prev ?? []);
     }
   }, []);
 
   const sincronizarCola = useCallback(async () => {
     const r = await sincronizar((g) => api("/api/gastos", { method: "POST", body: JSON.stringify(g) }));
-    if (r?.enviados) {
-      setAviso({ tipo: "ok", texto: `Se sincronizaron ${r.enviados} gasto${r.enviados > 1 ? "s" : ""} guardados en el teléfono ✓` });
-    }
+    if (r?.enviados) setAviso({ tipo: "ok", texto: `Se sincronizaron ${r.enviados} gasto${r.enviados > 1 ? "s" : ""} guardados en el teléfono ✓` });
     await recargar();
   }, [recargar]);
 
-  // Sincronización automática: al abrir, al volver la red, al volver a la app y cada minuto si hay cola
   useEffect(() => {
     sincronizarCola();
     const alVolver = () => document.visibilityState === "visible" && sincronizarCola();
@@ -105,45 +207,44 @@ function Panel({ user }) {
   }, [enCola.length, sincronizarCola]);
 
   const guardar = async (payload) => {
-    if (editando) {
+    if (hoja?.modo === "editar") {
       try {
-        const g = await api(`/api/gastos/${editando.id}`, { method: "PUT", body: JSON.stringify(payload) });
-        setEditando(null);
-        setAviso({ tipo: g.fabric_pendiente ? "warn" : "ok", texto: g.fabric_pendiente ? "Cambios guardados. Envío a Fabric pendiente." : "Cambios guardados ✓" });
+        const g = await api(`/api/gastos/${hoja.gasto.id}`, { method: "PUT", body: JSON.stringify(payload) });
+        setHoja(null);
+        setAviso({ tipo: g.fabric_pendiente ? "warn" : "ok", texto: g.fabric_pendiente ? "Cambios guardados. Fabric se sincroniza en breve." : "Cambios guardados ✓" });
         await recargar();
-        return true;
       } catch (e) {
-        setAviso({ tipo: "error", texto: e.status === undefined || e.status === 503 ? "Para editar necesitas conexión y la base disponible (06:00–23:00)." : e.message });
-        return false;
+        setAviso({ tipo: "error", texto: e.status === undefined || e.status === 503 ? "Para editar necesitas conexión y la base disponible (6:00 a. m.–11:00 p. m.)." : e.message });
       }
+      return;
     }
 
     const gasto = { id: nuevoId(), ...payload };
     try {
       const g = await api("/api/gastos", { method: "POST", body: JSON.stringify(gasto) });
+      setHoja(null);
       setAviso(g.fabric_pendiente
-        ? { tipo: "warn", texto: "Gasto guardado. Envío a Fabric pendiente (se reintenta solo)." }
-        : { tipo: "ok", texto: "Gasto guardado y enviado a Fabric ✓" });
+        ? { tipo: "warn", texto: "Gasto guardado. Fabric se sincroniza en breve." }
+        : { tipo: "ok", texto: `${fmt(g.monto_total, g.moneda)} en ${g.categoria} guardado ✓` });
       await recargar();
-      return true;
     } catch (e) {
       if (esReintentable(e)) {
         await cola.agregar(gasto);
         setEnCola(await cola.listar());
+        setHoja(null);
         setAviso({ tipo: "warn", texto: e.status === undefined
-          ? "Sin conexión: guardado en tu teléfono. Se enviará solo cuando vuelva la señal."
-          : "La base está en descanso: guardado en tu teléfono. Se enviará solo a partir de las 6:00 a. m." });
-        return true;
+          ? "Sin conexión: lo guardé en tu teléfono y se enviará solo."
+          : "La base está descansando: lo guardé en tu teléfono y se enviará solo desde las 6:00 a. m." });
+        return;
       }
       setAviso({ tipo: "error", texto: e.message });
-      return false;
     }
   };
 
   const eliminar = async (g) => {
     try {
       await api(`/api/gastos/${g.id}`, { method: "DELETE" });
-      setEditando(null);
+      setHoja(null);
       setAviso({ tipo: "ok", texto: "Gasto eliminado" });
       await recargar();
     } catch (e) {
@@ -151,104 +252,115 @@ function Panel({ user }) {
     }
   };
 
-  const editar = (g) => {
-    setEditando(g);
-    setAviso(null);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const k = (m, campo) => (kpis ? fmt(kpis[m][campo], m) : "—");
-  const pendientesFabric = gastos.filter((g) => g.fabric_pendiente).length;
+  const nombre = (user.nombre || "").split(" ")[0];
+  const grupos = gastos ? agruparPorDia(gastos) : [];
+  const pendientesFabric = (gastos || []).filter((g) => g.fabric_pendiente).length;
 
   return (
-    <div className="wrap">
-      <header className="top">
+    <div className="app">
+      <header className="cabecera">
         <div>
-          <h1>Mis Gastos</h1>
-          <span className="muted small">{user.email}</span>
+          <span className="muted small">{saludo()}{nombre && `, ${nombre}`}</span>
+          <h1>{tab === "inicio" ? "Mis Gastos" : TABS.find((t) => t.id === tab).txt}</h1>
         </div>
-        <div className="acciones">
-          <button className="btn ghost icono" onClick={() => setTutorial(true)} aria-label="Tutorial" title="Tutorial">?</button>
-          <a className="btn ghost" href="/auth/logout">Salir</a>
+        <div className="menu-wrap">
+          <button className="avatar" onClick={() => setMenu((v) => !v)} aria-label="Menú" aria-expanded={menu}>
+            {user.foto ? <img src={user.foto} alt="" referrerPolicy="no-referrer" /> : (nombre[0] || "?").toUpperCase()}
+          </button>
+          {menu && (
+            <div className="menu" role="menu" onClick={() => setMenu(false)}>
+              <span className="muted small menu-email">{user.email}</span>
+              <button role="menuitem" onClick={() => setTutorial(true)}><IcoAyuda size={18} /> Cómo usar la app</button>
+              <a role="menuitem" href="/auth/logout"><IcoSalir size={18} /> Cerrar sesión</a>
+            </div>
+          )}
         </div>
       </header>
 
-      {!bdDisponible && (
-        <p className="alert warn">🌙 La base está en descanso (23:00–06:00) o no hay conexión. Puedes seguir registrando: se guarda en tu teléfono.</p>
-      )}
+      <main className="contenido">
+        {tab === "inicio" && (
+          <>
+            <Hero kpis={kpis} bdDisponible={bdDisponible} />
 
-      <section className="stats">
-        <Stat label="Gasto real del mes" valor={k("PEN", "total")} />
-        <Stat label="Hormiga del mes" valor={k("PEN", "hormiga")} warn />
-        <Stat label="Por cobrar" valor={k("PEN", "por_cobrar")} />
-        {kpis && kpis.USD.n > 0 && <Stat label="Gasto en USD" valor={k("USD", "total")} />}
-      </section>
+            <div className="acciones-rapidas">
+              <input ref={fotoRef} type="file" accept="image/*" capture="environment" hidden
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) setHoja({ modo: "nuevo", archivo: f }); }} />
+              <button className="accion principal" onClick={() => fotoRef.current?.click()}>
+                <IcoCamara /> <span><strong>Escanear</strong><small>voucher, ticket o Yape</small></span>
+              </button>
+              <button className="accion" onClick={() => setHoja({ modo: "nuevo" })}>
+                <IcoMas /> <span><strong>Manual</strong><small>a mano</small></span>
+              </button>
+            </div>
 
-      <nav className="tabs" role="tablist">
-        {[["registrar", "Registrar"], ["cobrar", "Por cobrar"], ["resumen", "Resumen e IA"]].map(([id, txt]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""}
-            onClick={() => { setTab(id); setEditando(null); }}>{txt}</button>
+            <section className="seccion">
+              <div className="seccion-titulo">
+                <h2>Movimientos</h2>
+                {pendientesFabric > 0 && (
+                  <button className="btn link small" onClick={async () => {
+                    const r = await api("/api/fabric/reenviar", { method: "POST" }).catch((e) => ({ error: e.message }));
+                    setAviso(r.error ? { tipo: "error", texto: r.error } : { tipo: "ok", texto: `Sincronizados ${r.enviados} de ${r.pendientes} con Fabric` });
+                    recargar();
+                  }}>Sincronizar Fabric</button>
+                )}
+              </div>
+
+              {enCola.length > 0 && (
+                <div className="grupo">
+                  <h3 className="grupo-titulo"><span>📱 En tu teléfono</span><span>{enCola.length} por enviar</span></h3>
+                  <ul className="lista">{enCola.map((g) => <FilaGasto key={g.id} g={g} enCola />)}</ul>
+                </div>
+              )}
+
+              {gastos === null && <ListaSkeleton />}
+              {gastos?.length === 0 && enCola.length === 0 && (
+                <div className="vacio">
+                  <span className="vacio-emoji">🧾</span>
+                  <strong>Aún no hay gastos</strong>
+                  <span className="muted">Escanea tu primer voucher o regístralo a mano.</span>
+                </div>
+              )}
+
+              {grupos.map((gr) => (
+                <div className="grupo" key={gr.fecha}>
+                  <h3 className="grupo-titulo"><span>{etiquetaDia(gr.fecha)}</span><span>{fmt(gr.totalPEN)}</span></h3>
+                  <ul className="lista">
+                    {gr.items.map((g) => <FilaGasto key={g.id} g={g} onClick={() => setHoja({ modo: "editar", gasto: g })} />)}
+                  </ul>
+                </div>
+              ))}
+            </section>
+          </>
+        )}
+
+        {tab === "cobrar" && <PorCobrar onCambio={recargar} />}
+        {tab === "resumen" && <Resumen />}
+      </main>
+
+      <nav className="nav-inferior" aria-label="Secciones">
+        {TABS.map(({ id, txt, Ico }) => (
+          <button key={id} className={tab === id ? "on" : ""} aria-current={tab === id ? "page" : undefined}
+            onClick={() => { setTab(id); window.scrollTo({ top: 0 }); }}>
+            <Ico /> <span>{txt}</span>
+          </button>
         ))}
       </nav>
 
-      {aviso && <p className={`alert ${aviso.tipo}`} role="status">{aviso.texto}</p>}
-
-      {tab === "registrar" && (
-        <>
-          <Formulario editando={editando} onGuardar={guardar} onEliminar={eliminar}
-            onCancelar={() => setEditando(null)} onError={(texto) => setAviso({ tipo: "error", texto })} />
-
-          <section className="card">
-            <div className="row-between">
-              <h2>Últimos gastos</h2>
-              {pendientesFabric > 0 && (
-                <button className="btn ghost small" onClick={async () => {
-                  const r = await api("/api/fabric/reenviar", { method: "POST" }).catch((e) => ({ error: e.message }));
-                  setAviso(r.error ? { tipo: "error", texto: r.error } : { tipo: "ok", texto: `Enviados ${r.enviados} de ${r.pendientes} eventos a Fabric` });
-                  recargar();
-                }}>Reenviar a Fabric</button>
-              )}
-            </div>
-            {gastos.length === 0 && enCola.length === 0 && <p className="muted">Aún no hay gastos registrados.</p>}
-            <ul className="lista">
-              {enCola.map((g) => (
-                <li key={g.id} className="en-cola">
-                  <div>
-                    <strong>{g.concepto}</strong>
-                    <span className="muted small">{g.fecha_gasto} · {g.categoria} · {g.metodo_pago}</span>
-                    <span className="tags"><span className="tag warn">📱 En el teléfono, por enviar</span></span>
-                  </div>
-                  <span className="monto">{fmt(g.monto_total, g.moneda)}</span>
-                </li>
-              ))}
-              {gastos.map((g) => (
-                <li key={g.id}>
-                  <button className="fila" onClick={() => editar(g)} aria-label={`Editar ${g.concepto}`}>
-                    <div>
-                      <strong>{g.concepto}</strong>
-                      <span className="muted small">
-                        {g.fecha_gasto} · {g.categoria} · {g.metodo_pago}{g.entidad_financiera && ` ${g.entidad_financiera}`}
-                      </span>
-                      <span className="tags">
-                        <span className={`tag ${g.tipo_gasto === "Variable Hormiga" ? "warn" : ""}`}>{g.tipo_gasto}</span>
-                        {g.es_compartido && <span className="tag">Compartido · tu parte {fmt(g.monto_propio, g.moneda)}</span>}
-                        {g.fabric_pendiente && <span className="tag muted">Sin enviar</span>}
-                      </span>
-                    </div>
-                    <span className="monto">{fmt(g.monto_total, g.moneda)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </>
+      {hoja && (
+        <Sheet titulo={hoja.modo === "editar" ? "Editar gasto" : hoja.archivo ? "Gasto escaneado" : "Nuevo gasto"} onCerrar={cerrarHoja}>
+          <Formulario key={hoja.gasto?.id || "nuevo"} editando={hoja.gasto} archivoInicial={hoja.archivo}
+            onGuardar={guardar} onEliminar={eliminar} onError={(texto) => setAviso({ tipo: "error", texto })} />
+        </Sheet>
       )}
 
-      {tab === "cobrar" && <PorCobrar onCambio={recargar} />}
-      {tab === "resumen" && <Resumen />}
-
+      <Toast aviso={aviso} onCerrar={cerrarAviso} />
       {tutorial && <Tutorial onCerrar={cerrarTutorial} />}
       <AvisoActualizacion />
     </div>
   );
+}
+
+function saludo() {
+  const h = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Lima", hour: "numeric", hour12: false }).format(new Date()));
+  return h < 12 ? "Buenos días" : h < 19 ? "Buenas tardes" : "Buenas noches";
 }

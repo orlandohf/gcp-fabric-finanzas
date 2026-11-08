@@ -4,7 +4,50 @@ export const CATEGORIAS = ["Alimentación", "Transporte", "Vivienda", "Servicios
   "Entretenimiento", "Ropa", "Suscripciones", "Mascotas", "Regalos", "Otros"];
 export const ENTIDADES = ["BCP", "Interbank", "BBVA", "Scotiabank", "BanBif", "Yape", "Plin", "Efectivo"];
 
+// Ícono y tono (hue HSL) por categoría: identidad visual consistente en lista, chips y resumen
+export const CATEGORIA_META = {
+  "Alimentación": { emoji: "🍽️", h: 24 },
+  "Transporte": { emoji: "🚕", h: 45 },
+  "Vivienda": { emoji: "🏠", h: 200 },
+  "Servicios": { emoji: "💡", h: 52 },
+  "Salud": { emoji: "💊", h: 350 },
+  "Educación": { emoji: "📚", h: 230 },
+  "Entretenimiento": { emoji: "🎬", h: 280 },
+  "Ropa": { emoji: "👕", h: 320 },
+  "Suscripciones": { emoji: "🔁", h: 260 },
+  "Mascotas": { emoji: "🐾", h: 30 },
+  "Regalos": { emoji: "🎁", h: 340 },
+  "Otros": { emoji: "🧾", h: 170 },
+};
+export const metaCategoria = (c) => CATEGORIA_META[c] || { emoji: "🧾", h: 170 };
+
 export const hoyLima = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
+
+export const mesLima = () =>
+  new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", month: "long" }).format(new Date());
+
+/** "Hoy", "Ayer" o "lun. 3 nov." para encabezados de la lista */
+export function etiquetaDia(iso) {
+  const hoy = hoyLima();
+  const ayer = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date(Date.now() - 864e5));
+  if (iso === hoy) return "Hoy";
+  if (iso === ayer) return "Ayer";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Intl.DateTimeFormat("es-PE", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })
+    .format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/** Agrupa gastos por fecha_gasto (ya vienen ordenados desc) con subtotal en PEN */
+export function agruparPorDia(gastos) {
+  const grupos = [];
+  for (const g of gastos) {
+    let grupo = grupos[grupos.length - 1];
+    if (!grupo || grupo.fecha !== g.fecha_gasto) grupos.push((grupo = { fecha: g.fecha_gasto, items: [], totalPEN: 0 }));
+    grupo.items.push(g);
+    if (g.moneda === "PEN") grupo.totalPEN += g.monto_propio ?? g.monto_total;
+  }
+  return grupos;
+}
 
 export const fmt = (monto, moneda = "PEN") =>
   new Intl.NumberFormat("es-PE", { style: "currency", currency: moneda }).format(monto || 0);

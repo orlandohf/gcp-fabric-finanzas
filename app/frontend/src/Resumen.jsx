@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, fmt } from "./lib.js";
+import { api, fmt, metaCategoria } from "./lib.js";
 import Stat from "./Stat.jsx";
 
 function sumarPorClave(filas) {
@@ -12,7 +12,7 @@ function sumarPorClave(filas) {
   return Object.values(m).sort((a, b) => b.PEN - a.PEN || b.USD - a.USD);
 }
 
-function Barras({ titulo, filas }) {
+function Barras({ titulo, filas, categorias }) {
   const datos = sumarPorClave(filas);
   const max = Math.max(1, ...datos.map((d) => d.PEN));
   if (!datos.length) return null;
@@ -23,10 +23,10 @@ function Barras({ titulo, filas }) {
         {datos.map((d) => (
           <li key={d.clave}>
             <div className="row-between small">
-              <span>{d.clave}</span>
-              <span className="monto">{fmt(d.PEN)}{d.USD > 0 && ` · ${fmt(d.USD, "USD")}`}</span>
+              <span>{categorias && <span aria-hidden="true">{metaCategoria(d.clave).emoji} </span>}{d.clave}</span>
+              <span className="monto">{[d.PEN > 0 || !d.USD ? fmt(d.PEN) : null, d.USD > 0 ? fmt(d.USD, "USD") : null].filter(Boolean).join(" · ")}</span>
             </div>
-            <div className="barra"><span style={{ width: `${(d.PEN / max) * 100}%` }} /></div>
+            <div className="barra"><span style={{ width: `${(d.PEN / max) * 100}%`, ...(categorias && { background: `hsl(${metaCategoria(d.clave).h} 60% 45%)` }) }} /></div>
           </li>
         ))}
       </ul>
@@ -67,8 +67,8 @@ export default function Resumen() {
         </div>
       </div>
 
-      {error && <p className="alert">{error}</p>}
-      {!datos && !error && <p className="muted center-text">Cargando resumen…</p>}
+      {error && <p className="alert warn">{error}</p>}
+      {!datos && !error && <div className="card"><span className="skeleton linea" /><span className="skeleton linea corta mt" /></div>}
 
       {datos && (
         <>
@@ -80,7 +80,7 @@ export default function Resumen() {
 
           <section className="card ia">
             <div className="row-between">
-              <h2>✨ Consejos con IA</h2>
+              <h2>✨ Tu asesor con IA</h2>
               <button className="btn primary small" onClick={analizar} disabled={analizando}>
                 {analizando ? <><span className="spinner" /> Analizando…</> : analisis ? "Volver a analizar" : "Analizar mis gastos"}
               </button>
@@ -105,7 +105,7 @@ export default function Resumen() {
             )}
           </section>
 
-          <Barras titulo="Por categoría" filas={datos.por_categoria} />
+          <Barras titulo="Por categoría" filas={datos.por_categoria} categorias />
           <Barras titulo="Por tipo de gasto" filas={datos.por_tipo} />
           <Barras titulo="Por método de pago" filas={datos.por_metodo} />
 
@@ -114,9 +114,10 @@ export default function Resumen() {
               <h2>Top gastos hormiga</h2>
               <ul className="lista">
                 {datos.top_hormiga.map((h) => (
-                  <li key={h.concepto}>
-                    <div><strong className="capital">{h.concepto}</strong><span className="muted small">{h.veces} {h.veces === 1 ? "vez" : "veces"}</span></div>
-                    <span className="monto">{fmt(h.total)}</span>
+                  <li key={h.concepto} className="cobro">
+                    <span className="avatar-cat" style={{ "--h": 40 }} aria-hidden="true">🐜</span>
+                    <span className="fila-texto"><strong className="capital">{h.concepto}</strong><span className="muted small">{h.veces} {h.veces === 1 ? "vez" : "veces"}</span></span>
+                    <span className="fila-monto"><strong>{fmt(h.total)}</strong></span>
                   </li>
                 ))}
               </ul>
