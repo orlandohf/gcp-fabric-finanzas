@@ -2,7 +2,7 @@
 project_id    = "mi-proyecto-gcp"
 region        = "us-central1"
 allowed_email = "tu-correo@gmail.com"
-github_repo   = "orlandohf/gcp-fabric-finanzas"
+github_repo   = "<usuario>/gcp-fabric-finanzas"
 
 # Opcionales en el primer apply (si van vacíos se guarda "PENDIENTE"):
 # fabric_eventstream_connection_string = "Endpoint=sb://...;SharedAccessKeyName=...;SharedAccessKey=...;EntityPath=..."

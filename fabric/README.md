@@ -1,6 +1,6 @@
 # Microsoft Fabric — Mis Gastos (TEST y PRD)
 
-Tenant de Fabric: <tenant> · Capacidad: **Trial** (`<id-capacidad>`)
+Capacidad: **Fabric Trial** (los IDs reales viven fuera del repositorio)
 
 ## Flujo de datos
 ```
@@ -14,7 +14,7 @@ Cloud Run (outbox) ──Kafka──▶ Eventstream es_finanzas_gcp ──(Proce
 ## Entornos
 | | TEST | PRD |
 |---|---|---|
-| Workspace | `test_wt` (`<id-workspace-test>`) | `finanzas-prd` (`<id-workspace-prd>`) |
+| Workspace | `<workspace-test>` | `<workspace-prd>` |
 | Eventhouse / KQL DB | `eh_finanzas` · `https://<cluster>.kusto.fabric.microsoft.com` | `eh_finanzas` · `https://<cluster>.kusto.fabric.microsoft.com` |
 | Eventstream | `es_finanzas_gcp` (fuente Custom Endpoint `cloudrun-gastos`) | `es_finanzas_gcp` (clonado de TEST vía API) |
 | ¿Quién envía datos? | Eventos sintéticos / pruebas manuales | Cloud Run producción (`FABRIC_ENTORNO=prd`) |

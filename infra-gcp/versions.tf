@@ -12,11 +12,9 @@ terraform {
     }
   }
 
-  # Estado remoto (bucket creado por state_bucket.tf; versionado y privado)
-  backend "gcs" {
-    bucket = "mi-proyecto-gcp-finanzas-tfstate"
-    prefix = "finanzas"
-  }
+  # Estado remoto en GCS (configuración parcial: bucket y prefix en backend.hcl, que no se versiona)
+  #   terraform init -backend-config=backend.hcl
+  backend "gcs" {}
 }
 
 provider "google" {

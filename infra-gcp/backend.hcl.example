@@ -1,0 +1,3 @@
+# Copiar a backend.hcl (no se versiona)
+bucket = "<proyecto>-finanzas-tfstate"
+prefix = "finanzas"
