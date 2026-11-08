@@ -1,0 +1,57 @@
+// =====================================================================
+// BRONZE — raw_gastos: una fila por evento, tal como llega del Eventstream.
+// Append-only e inmutable. Idempotente: se puede re-ejecutar en TEST y PRD.
+// Contrato: v1 (sin op_type/version) y v2 (outbox CDC) conviven aquí.
+// =====================================================================
+
+.create-merge table raw_gastos (
+    id: string,
+    op_type: string,            // INSERT | UPDATE | DELETE (vacío en eventos v1)
+    version: int,
+    version_timestamp: datetime,
+    schema_version: int,
+    fecha_registro: datetime,
+    fecha_gasto: datetime,
+    categoria: string,
+    concepto: string,
+    tipo_gasto: string,
+    metodo_pago: string,
+    entidad_financiera: string,
+    moneda: string,
+    cantidad: real,
+    monto_total: real,
+    monto_propio: real,
+    es_compartido: bool,
+    liquidado: bool
+) with (folder = "bronze", docstring = "Eventos crudos de gastos desde Fabric Eventstream (append-only)")
+
+// Mapping JSON que usa el destino Eventhouse del Eventstream
+.create-or-alter table raw_gastos ingestion json mapping "raw_gastos_mapping"
+```
+[
+  {"column": "id",                 "Properties": {"Path": "$.id"}},
+  {"column": "op_type",            "Properties": {"Path": "$.op_type"}},
+  {"column": "version",            "Properties": {"Path": "$.version"}},
+  {"column": "version_timestamp",  "Properties": {"Path": "$.version_timestamp"}},
+  {"column": "schema_version",     "Properties": {"Path": "$.schema_version"}},
+  {"column": "fecha_registro",     "Properties": {"Path": "$.fecha_registro"}},
+  {"column": "fecha_gasto",        "Properties": {"Path": "$.fecha_gasto"}},
+  {"column": "categoria",          "Properties": {"Path": "$.categoria"}},
+  {"column": "concepto",           "Properties": {"Path": "$.concepto"}},
+  {"column": "tipo_gasto",         "Properties": {"Path": "$.tipo_gasto"}},
+  {"column": "metodo_pago",        "Properties": {"Path": "$.metodo_pago"}},
+  {"column": "entidad_financiera", "Properties": {"Path": "$.entidad_financiera"}},
+  {"column": "moneda",             "Properties": {"Path": "$.moneda"}},
+  {"column": "cantidad",           "Properties": {"Path": "$.cantidad"}},
+  {"column": "monto_total",        "Properties": {"Path": "$.monto_total"}},
+  {"column": "monto_propio",       "Properties": {"Path": "$.monto_propio"}},
+  {"column": "es_compartido",      "Properties": {"Path": "$.es_compartido"}},
+  {"column": "liquidado",          "Properties": {"Path": "$.liquidado"}}
+]
+```
+
+// Bronze conserva todo el historial (auditoría / replay)
+.alter-merge table raw_gastos policy retention softdelete = 3650d recoverability = enabled
+
+// Streaming ingestion para latencia < 1 s
+.alter table raw_gastos policy streamingingestion enable

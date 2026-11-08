@@ -1,0 +1,33 @@
+// =====================================================================
+// Verificación del pipeline (ejecutar tras desplegar en TEST o PRD)
+// =====================================================================
+
+// 1. ¿Llegan eventos? (últimas 24 h por tipo de operación)
+raw_gastos
+| where ingestion_time() > ago(24h)
+| summarize eventos = count() by op_type = iff(isempty(op_type), "v1", op_type), bin(ingestion_time(), 1h)
+
+// 2. ¿La update policy está llenando Silver? (Bronze y Silver deben tener el mismo número de filas válidas)
+print bronze = toscalar(raw_gastos | where isnotempty(id) | count),
+      silver = toscalar(gastos_silver | count)
+
+// 3. Errores de la update policy
+.show ingestion failures | where Table == "gastos_silver" | top 20 by FailedOn desc
+
+// 4. Latencia de extremo a extremo (app → Eventhouse)
+gastos_silver
+| where ingestado_en > ago(1d)
+| extend latencia_s = datetime_diff("second", ingestado_en, version_timestamp)
+| summarize p50 = percentile(latencia_s, 50), p95 = percentile(latencia_s, 95), max = max(latencia_s)
+
+// 5. Calidad CDC: UPDATE/DELETE sin INSERT previo (eventos huérfanos)
+gastos_silver
+| summarize ops = make_set(op_type) by id
+| where not(set_has_element(ops, "INSERT"))
+
+// 6. Estado actual vs. borrados
+materialized_view("gastos_ultima_version")
+| summarize vigentes = countif(op_type != "DELETE"), borrados = countif(op_type == "DELETE")
+
+// 7. KPIs del mes (deben coincidir con /api/kpis/mes de la app, en PEN)
+fn_kpis_mes()
