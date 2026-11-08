@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { cola, esReintentable, sincronizar } from "./cola.js";
 import Formulario from "./Formulario.jsx";
-import { IcoAyuda, IcoCamara, IcoCobrar, IcoInicio, IcoMas, IcoNube, IcoResumen, IcoSalir } from "./iconos.jsx";
+import { IcoAyuda, IcoCobrar, IcoInicio, IcoNube, IcoResumen, IcoSalir } from "./iconos.jsx";
 import { agruparPorDia, api, etiquetaDia, fmt, mesLima, metaCategoria, nuevoId, store } from "./lib.js";
 import PorCobrar from "./PorCobrar.jsx";
 import Resumen from "./Resumen.jsx";
@@ -82,11 +82,11 @@ function Toast({ aviso, onCerrar }) {
   );
 }
 
-function Hero({ kpis, bdDisponible }) {
+function Hero({ kpis, bdDisponible }) { // resumen compacto del mes
   const pen = kpis?.PEN;
   const pctHormiga = pen?.total ? Math.round((pen.hormiga / pen.total) * 100) : 0;
   return (
-    <section className="hero" aria-label="Resumen del mes">
+    <section className="hero compacto" aria-label="Resumen del mes">
       <div className="hero-top">
         <span>Gasto real de {mesLima()}</span>
         {!bdDisponible && <span className="hero-chip"><IcoNube size={14} /> Modo sin conexión</span>}
@@ -162,12 +162,11 @@ function Panel({ user }) {
   const [bdDisponible, setBdDisponible] = useState(true);
   const [aviso, setAviso] = useState(null);
   const [tab, setTab] = useState("inicio");
-  const [hoja, setHoja] = useState(null); // null | {modo: "nuevo"|"editar", gasto?, archivo?}
+  const [hoja, setHoja] = useState(null); // null | {modo: "editar", gasto}
   const [menu, setMenu] = useState(false);
-  const [tutorial, setTutorial] = useState(() => !store.get("tutorial_v2"));
-  const fotoRef = useRef(null);
+  const [tutorial, setTutorial] = useState(() => !store.get("tutorial_v3"));
 
-  const cerrarTutorial = useCallback(() => { store.set("tutorial_v2", "1"); setTutorial(false); }, []);
+  const cerrarTutorial = useCallback(() => { store.set("tutorial_v3", "1"); setTutorial(false); }, []);
   const cerrarAviso = useCallback(() => setAviso(null), []);
   const cerrarHoja = useCallback(() => setHoja(null), []);
 
@@ -213,10 +212,11 @@ function Panel({ user }) {
         setHoja(null);
         setAviso({ tipo: g.fabric_pendiente ? "warn" : "ok", texto: g.fabric_pendiente ? "Cambios guardados. Fabric se sincroniza en breve." : "Cambios guardados ✓" });
         await recargar();
+        return true;
       } catch (e) {
         setAviso({ tipo: "error", texto: e.status === undefined || e.status === 503 ? "Para editar necesitas conexión y la base disponible (6:00 a. m.–11:00 p. m.)." : e.message });
+        return false;
       }
-      return;
     }
 
     const gasto = { id: nuevoId(), ...payload };
@@ -227,6 +227,7 @@ function Panel({ user }) {
         ? { tipo: "warn", texto: "Gasto guardado. Fabric se sincroniza en breve." }
         : { tipo: "ok", texto: `${fmt(g.monto_total, g.moneda)} en ${g.categoria} guardado ✓` });
       await recargar();
+      return true;
     } catch (e) {
       if (esReintentable(e)) {
         await cola.agregar(gasto);
@@ -235,9 +236,10 @@ function Panel({ user }) {
         setAviso({ tipo: "warn", texto: e.status === undefined
           ? "Sin conexión: lo guardé en tu teléfono y se enviará solo."
           : "La base está descansando: lo guardé en tu teléfono y se enviará solo desde las 6:00 a. m." });
-        return;
+        return true;
       }
       setAviso({ tipo: "error", texto: e.message });
+      return false;
     }
   };
 
@@ -282,16 +284,9 @@ function Panel({ user }) {
           <>
             <Hero kpis={kpis} bdDisponible={bdDisponible} />
 
-            <div className="acciones-rapidas">
-              <input ref={fotoRef} type="file" accept="image/*" capture="environment" hidden
-                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) setHoja({ modo: "nuevo", archivo: f }); }} />
-              <button className="accion principal" onClick={() => fotoRef.current?.click()}>
-                <IcoCamara /> <span><strong>Escanear</strong><small>voucher, ticket o Yape</small></span>
-              </button>
-              <button className="accion" onClick={() => setHoja({ modo: "nuevo" })}>
-                <IcoMas /> <span><strong>Manual</strong><small>a mano</small></span>
-              </button>
-            </div>
+            <section className="card registro" aria-label="Registrar gasto">
+              <Formulario inline onGuardar={guardar} onEliminar={eliminar} onError={(texto) => setAviso({ tipo: "error", texto })} />
+            </section>
 
             <section className="seccion">
               <div className="seccion-titulo">
@@ -347,8 +342,8 @@ function Panel({ user }) {
       </nav>
 
       {hoja && (
-        <Sheet titulo={hoja.modo === "editar" ? "Editar gasto" : hoja.archivo ? "Gasto escaneado" : "Nuevo gasto"} onCerrar={cerrarHoja}>
-          <Formulario key={hoja.gasto?.id || "nuevo"} editando={hoja.gasto} archivoInicial={hoja.archivo}
+        <Sheet titulo="Editar gasto" onCerrar={cerrarHoja}>
+          <Formulario key={hoja.gasto.id} editando={hoja.gasto}
             onGuardar={guardar} onEliminar={eliminar} onError={(texto) => setAviso({ tipo: "error", texto })} />
         </Sheet>
       )}

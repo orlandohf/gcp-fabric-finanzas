@@ -451,3 +451,93 @@ input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition: none !important; }
   .btn:active, .chip:active, .accion:active { transform: none; }
 }
+
+/* =====================================================================
+   v5 — inicio con registro rápido en línea (skill /form-design)
+   ===================================================================== */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Resumen del mes compacto: informa sin competir con el registro */
+.hero.compacto { padding: 14px 16px; gap: 2px; border-radius: 18px; box-shadow: 0 6px 18px rgb(15 118 110 / .2); }
+.hero.compacto .hero-top { font-size: .8rem; }
+.hero.compacto .hero-monto { font-size: 1.9rem; }
+.hero.compacto .hero-metricas { margin-top: 6px; gap: 6px; }
+.hero.compacto .hero-metricas > div { padding: 6px 9px; border-radius: 10px; }
+.hero.compacto .hero-metricas strong { font-size: .84rem; }
+.hero.compacto .hero-skel { height: 1.9rem; }
+
+/* Tarjeta de registro: la acción principal */
+.card.registro { padding: 16px 18px 18px; border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
+.form-gasto.inline { gap: 14px; }
+.form-titulo { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.btn.chip-accion {
+  min-height: 36px; padding: 6px 12px; font-size: .84rem; border-radius: 999px;
+  background: var(--card-2); border: 1px solid var(--border); color: var(--primary);
+}
+.form-gasto.inline .chips.scroll { margin: 0 -18px; padding: 2px 18px 6px; }
+
+/* Monto: moneda + número grande en una fila */
+.monto-fila { display: flex; align-items: center; gap: 10px; }
+.monto-fila .segmentado.mini { flex: none; flex-direction: column; gap: 2px; padding: 3px; }
+.monto-fila .segmentado.mini button { min-height: 30px; padding: 4px 10px; font-size: .8rem; }
+.monto-fila .monto-grande { justify-content: flex-start; flex: 1; min-width: 0; }
+.monto-fila .monto-grande input { width: 100%; max-width: none; font-size: 2.4rem; }
+.monto-grande.con-error input { border-bottom-color: var(--error); }
+
+/* Método y tipo como segmentados de ancho completo (todas las opciones visibles) */
+.segmentado.metodos button { padding: 8px 4px; font-size: .86rem; }
+.segmentado.tipos button { display: grid; gap: 1px; padding: 7px 4px; line-height: 1.15; }
+.segmentado.tipos button strong { font-size: .86rem; }
+.segmentado.tipos button small { font-size: .68rem; font-weight: 500; color: var(--muted); }
+.segmentado.tipos button.on small { color: inherit; opacity: .8; }
+.segmentado.tipos button.hormiga.on { color: var(--warn); }
+
+/* Errores debajo del campo */
+.error-campo { margin: 2px 0 0; color: var(--error); font-size: .8rem; font-weight: 500; }
+fieldset .error-campo { margin-top: 6px; }
+input[aria-invalid="true"] { border-color: var(--error); }
+
+/* Más opciones (plegable con resumen) */
+.detalles-cabecera {
+  all: unset; box-sizing: border-box; cursor: pointer; width: 100%;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 12px 14px; font-weight: 600; font-size: .9rem; color: var(--text);
+}
+.detalles-cabecera::after { content: "›"; font-size: 1.3rem; color: var(--muted); transition: transform .15s; }
+.detalles.abierto .detalles-cabecera::after { transform: rotate(90deg); }
+.detalles-cabecera span:first-child { flex: none; }
+.detalles-cabecera .small { flex: 1; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detalles-cuerpo { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 0 14px 14px; }
+.fila-2 { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; }
+
+.form-gasto.inline .form-acciones { position: static; background: none; padding: 2px 0 0; }
+
+/* v5.1 — que "Guardar" quepa sin scroll en 390×844 */
+.contenido { gap: 12px; }
+.hero.compacto { padding: 12px 14px; }
+.hero.compacto .hero-monto { font-size: 1.65rem; }
+.hero.compacto .hero-metricas { margin-top: 4px; }
+.hero.compacto .hero-metricas > div { padding: 5px 8px; gap: 0; }
+.hero.compacto .hero-metricas span { font-size: .68rem; }
+.hero.compacto .barra-mini { margin-top: 3px; height: 3px; }
+.card.registro { padding: 14px 16px 16px; }
+.form-gasto.inline { gap: 11px; }
+.form-gasto.inline .chips.scroll { margin: 0 -16px; padding: 2px 16px 4px; scroll-padding-inline: 16px; }
+.form-gasto.inline .campo, .form-gasto.inline legend { gap: 5px; }
+.form-gasto.inline legend { margin-bottom: 5px; }
+.monto-fila .segmentado.mini { flex-direction: row; align-self: center; }
+.monto-fila .segmentado.mini button { min-height: 32px; padding: 4px 9px; font-size: .76rem; }
+.monto-fila .monto-grande input { font-size: 2.1rem; }
+.monto-fila .monto-grande .simbolo { font-size: 1.4rem; }
+.form-gasto.inline .detalles-cabecera { padding: 10px 14px; }
+.form-gasto.inline .btn.grande { min-height: 50px; }
+
+/* v5.2 — ajuste fino de altura (Guardar visible sobre la barra inferior en 390×844) */
+.cabecera { padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 8px; }
+.form-gasto.inline { gap: 9px; }
+.form-gasto.inline .form-titulo h2 { font-size: .95rem; }
+.form-gasto.inline .btn.chip-accion { min-height: 32px; padding: 4px 11px; }
+.card.registro { padding-top: 12px; }
+.form-gasto.inline input:not([type="checkbox"]) { min-height: 44px; padding-top: 9px; padding-bottom: 9px; }
+.form-gasto.inline .chip { min-height: 38px; padding: 7px 12px; }
+.form-gasto.inline .segmentado.metodos button { min-height: 36px; }
