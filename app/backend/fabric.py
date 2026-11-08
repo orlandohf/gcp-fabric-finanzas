@@ -21,10 +21,12 @@ def _parse_connection_string(cs: str) -> dict:
     return {"host": host, "topic": partes["EntityPath"]}
 
 
-def _get_producer() -> tuple[Producer, str] | None:
+def configurado() -> bool:
+    return config.configurado(config.FABRIC_CONNECTION_STRING)
+
+
+def _get_producer() -> tuple[Producer, str]:
     global _producer, _topic
-    if not config.configurado(config.FABRIC_CONNECTION_STRING):
-        return None
     with _lock:
         if _producer is None:
             info = _parse_connection_string(config.FABRIC_CONNECTION_STRING)
@@ -36,6 +38,7 @@ def _get_producer() -> tuple[Producer, str] | None:
                 "sasl.password": config.FABRIC_CONNECTION_STRING,
                 "client.id": "finanzas-app",
                 "acks": "all",
+                "enable.idempotence": False,  # Event Hubs no soporta el productor idempotente de Kafka
                 "message.timeout.ms": 10000,
                 "request.timeout.ms": 10000,
             })
@@ -43,35 +46,41 @@ def _get_producer() -> tuple[Producer, str] | None:
     return _producer, _topic
 
 
-def enviar_evento(evento: dict) -> bool:
-    """Publica el evento y espera confirmación. Devuelve True si Fabric lo recibió."""
+def enviar_lote(mensajes: list[tuple[str, dict]]) -> list[str | None]:
+    """Publica [(clave, evento)] y espera confirmación.
+
+    Devuelve, por mensaje, None si Fabric lo confirmó o el texto del error.
+    La clave es el id del gasto → mismo partition → orden garantizado por gasto.
+    """
+    if not mensajes:
+        return []
+    if not configurado():
+        return ["Fabric no configurado"] * len(mensajes)
     try:
-        prod = _get_producer()
-    except Exception:
+        producer, topic = _get_producer()
+    except Exception as e:
         log.exception("Cadena de conexión de Fabric inválida")
-        return False
-    if prod is None:
-        log.warning("Fabric no configurado (PENDIENTE); evento %s no enviado", evento.get("id"))
-        return False
+        return [f"config: {e}"] * len(mensajes)
 
-    producer, topic = prod
-    resultado = {"ok": False}
+    resultados: list[str | None] = ["sin confirmación"] * len(mensajes)
 
-    def _callback(err, _msg):
-        if err:
-            log.error("Error enviando a Fabric: %s", err)
-        else:
-            resultado["ok"] = True
+    def _callback(i):
+        def cb(err, _msg):
+            resultados[i] = str(err) if err else None
+        return cb
 
     try:
-        producer.produce(
-            topic,
-            key=str(evento["id"]),
-            value=json.dumps(evento, ensure_ascii=False, default=str).encode("utf-8"),
-            callback=_callback,
-        )
-        producer.flush(12)
-    except Exception:
+        for i, (clave, ev) in enumerate(mensajes):
+            producer.produce(topic, key=clave,
+                             value=json.dumps(ev, ensure_ascii=False, default=str).encode("utf-8"),
+                             callback=_callback(i))
+            producer.poll(0)
+        producer.flush(15)
+    except Exception as e:
         log.exception("Fallo publicando en Fabric")
-        return False
-    return resultado["ok"]
+        return [r if r is None else f"produce: {e}" for r in resultados]
+
+    fallidos = [r for r in resultados if r]
+    if fallidos:
+        log.error("Fabric: %d de %d eventos fallaron (%s)", len(fallidos), len(mensajes), fallidos[0])
+    return resultados
