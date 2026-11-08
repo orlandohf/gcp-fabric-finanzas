@@ -6,15 +6,15 @@ on:
     paths:
       - "app/**"
       - ".github/workflows/deploy.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write # necesario para Workload Identity Federation
-
-concurrency:
-  group: deploy-cloud-run
-  cancel-in-progress: false
 
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -23,8 +23,53 @@ env:
   IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/finanzas/finanzas-app
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: finanzas_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/backend/requirements*.txt
+
+      - name: Tests backend (pytest + PostgreSQL 16)
+        working-directory: app/backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/finanzas_test
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: app/frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-cloud-run
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 

@@ -1,24 +1,23 @@
+import base64
+import binascii
 import logging
 import os
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
-from typing import Literal
+from decimal import ROUND_HALF_UP, Decimal
+from typing import Annotated, Literal
 
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from starlette.middleware.sessions import SessionMiddleware
-
-import base64
-import binascii
 
 import config
 import db
-import fabric
 import ia
+import outbox
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -47,7 +46,8 @@ oauth.register(
 def _bd_no_disponible(_req, _exc):
     return JSONResponse(
         status_code=503,
-        content={"detail": "La base de datos está en horario de descanso (22:00–08:00) o no disponible."},
+        content={"detail": "La base de datos está en horario de descanso (23:00–06:00) o no disponible.",
+                 "codigo": "bd_descanso"},
     )
 
 
@@ -62,6 +62,9 @@ def usuario_actual(request: Request) -> dict:
     if not user or user.get("email", "").lower() != config.ALLOWED_EMAIL:
         raise HTTPException(status_code=401, detail="No autenticado")
     return user
+
+
+Usuario = Annotated[dict, Depends(usuario_actual)]
 
 
 @app.get("/auth/login")
@@ -95,8 +98,9 @@ def logout(request: Request):
     return RedirectResponse("/")
 
 
-# ---------- API ----------
+# ---------- Modelos ----------
 class GastoIn(BaseModel):
+    id: uuid.UUID | None = Field(default=None, description="Generado por el cliente (idempotencia de la cola offline)")
     fecha_gasto: date
     categoria: str = Field(min_length=1, max_length=60)
     concepto: str = Field(min_length=1, max_length=200)
@@ -107,65 +111,103 @@ class GastoIn(BaseModel):
     cantidad: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     monto_total: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
     es_compartido: bool = False
+    monto_propio: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2,
+                                         description="Parte que pagué yo (solo si es compartido)")
+
+    @model_validator(mode="after")
+    def _validar_split(self):
+        if not self.es_compartido:
+            self.monto_propio = None
+        elif self.monto_propio is None:
+            self.monto_propio = (self.monto_total / 2).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        elif self.monto_propio > self.monto_total:
+            raise ValueError("Tu parte no puede ser mayor que el monto total")
+        return self
 
 
-def _evento(g: dict) -> dict:
-    """JSON enviado a Fabric (sin columnas internas)."""
-    return {
-        "id": str(g["id"]),
-        "fecha_registro": g["fecha_registro"].astimezone(config.TZ).isoformat(),
-        "fecha_gasto": g["fecha_gasto"].isoformat(),
-        "categoria": g["categoria"],
-        "concepto": g["concepto"],
-        "tipo_gasto": g["tipo_gasto"],
-        "metodo_pago": g["metodo_pago"],
-        "entidad_financiera": g["entidad_financiera"],
-        "moneda": g["moneda"],
-        "cantidad": float(g["cantidad"]),
-        "monto_total": float(g["monto_total"]),
-        "es_compartido": g["es_compartido"],
-    }
+class LiquidarIn(BaseModel):
+    liquidado: bool = True
 
 
+def _salida(g: dict, pendiente: bool) -> dict:
+    """Vista pública del gasto (sin metadatos del contrato de eventos)."""
+    datos = db.evento(g, "INSERT")
+    for interno in ("op_type", "schema_version"):
+        datos.pop(interno)
+    return datos | {"fabric_pendiente": pendiente}
+
+
+def _campos(gasto: GastoIn) -> dict:
+    return gasto.model_dump(exclude={"id"})
+
+
+# ---------- API ----------
 @app.get("/api/health")  # /healthz está reservado por el frontend de Cloud Run
 def health():
     return {"ok": True}
 
 
 @app.get("/api/me")
-def me(user: dict = Depends(usuario_actual)):
+def me(user: Usuario):
     return user
 
 
 @app.get("/api/gastos")
-def listar(user: dict = Depends(usuario_actual)):
-    return [_evento(g) | {"fabric_enviado": g["fabric_enviado"]} for g in db.listar_gastos()]
+def listar(user: Usuario, tareas: BackgroundTasks):
+    filas = db.listar_gastos()
+    if any(g["fabric_pendiente"] for g in filas):
+        tareas.add_task(outbox.publicar_en_segundo_plano)  # auto-retry
+    return [_salida(g, g["fabric_pendiente"]) for g in filas]
 
 
 @app.post("/api/gastos", status_code=201)
-def crear(gasto: GastoIn, user: dict = Depends(usuario_actual)):
-    registro = gasto.model_dump() | {"id": uuid.uuid4(), "fecha_registro": datetime.now(config.TZ)}
+def crear(gasto: GastoIn, user: Usuario):
+    registro = _campos(gasto) | {"id": gasto.id or uuid.uuid4(), "fecha_registro": datetime.now(config.TZ)}
+    fila, _creado = db.crear_gasto(registro)   # (a) PostgreSQL + evento en outbox (misma transacción)
+    outbox.publicar_pendientes()               # (b) Fabric, incluye reintento de pendientes viejos
+    return _salida(fila, db.fabric_pendiente(fila["id"]))
 
-    # (a) Cloud SQL: fuente de verdad
-    db.insertar_gasto(registro)
 
-    # (b) Fabric Eventstream: tiempo real (si falla, queda pendiente de reenvío)
-    evento = _evento(registro)
-    enviado = fabric.enviar_evento(evento)
-    if enviado:
-        db.marcar_enviado(registro["id"])
-    return evento | {"fabric_enviado": enviado}
+@app.put("/api/gastos/{gasto_id}")
+def editar(gasto_id: uuid.UUID, gasto: GastoIn, user: Usuario):
+    fila = db.actualizar_gasto(gasto_id, _campos(gasto))
+    if not fila:
+        raise HTTPException(404, "Gasto no encontrado")
+    outbox.publicar_pendientes()
+    return _salida(fila, db.fabric_pendiente(gasto_id))
+
+
+@app.delete("/api/gastos/{gasto_id}", status_code=204)
+def eliminar(gasto_id: uuid.UUID, user: Usuario):
+    if not db.eliminar_gasto(gasto_id):
+        raise HTTPException(404, "Gasto no encontrado")
+    outbox.publicar_pendientes()
+
+
+@app.get("/api/kpis/mes")
+def kpis_mes(user: Usuario):
+    vacio = {"n": 0, "total": 0.0, "hormiga": 0.0, "por_cobrar": 0.0}
+    por_moneda = {k["moneda"]: k for k in db.kpis_mes()}
+    return {m: por_moneda.get(m, vacio | {"moneda": m}) for m in ("PEN", "USD")}
+
+
+@app.get("/api/por-cobrar")
+def listar_por_cobrar(user: Usuario):
+    return [_salida(g, False) | {"pendiente": g["pendiente"]} for g in db.por_cobrar()]
+
+
+@app.post("/api/gastos/{gasto_id}/liquidar")
+def liquidar(gasto_id: uuid.UUID, body: LiquidarIn, user: Usuario):
+    fila = db.marcar_liquidado(gasto_id, body.liquidado)
+    if not fila:
+        raise HTTPException(404, "Gasto compartido no encontrado")
+    outbox.publicar_pendientes()
+    return _salida(fila, db.fabric_pendiente(gasto_id))
 
 
 @app.post("/api/fabric/reenviar")
-def reenviar(user: dict = Depends(usuario_actual)):
-    ok = 0
-    pendientes = db.pendientes_fabric()
-    for g in pendientes:
-        if fabric.enviar_evento(_evento(g)):
-            db.marcar_enviado(g["id"])
-            ok += 1
-    return {"pendientes": len(pendientes), "reenviados": ok}
+def reenviar(user: Usuario):
+    return outbox.publicar_pendientes()
 
 
 # ---------- IA (Gemini) ----------
@@ -179,7 +221,7 @@ class ImagenIn(BaseModel):
 
 
 @app.post("/api/ia/escanear")
-def escanear(img: ImagenIn, user: dict = Depends(usuario_actual)):
+def escanear(img: ImagenIn, user: Usuario):
     if img.mime_type not in MIME_PERMITIDOS:
         raise HTTPException(415, "Formato de imagen no soportado")
     try:
@@ -192,12 +234,12 @@ def escanear(img: ImagenIn, user: dict = Depends(usuario_actual)):
 
 
 @app.get("/api/resumen")
-def resumen(dias: int = 30, user: dict = Depends(usuario_actual)):
+def resumen(user: Usuario, dias: int = 30):
     return db.resumen(max(7, min(dias, 365)))
 
 
 @app.post("/api/ia/consejos")
-def consejos(dias: int = 30, user: dict = Depends(usuario_actual)):
+def consejos(user: Usuario, dias: int = 30):
     dias = max(7, min(dias, 365))
     datos = db.resumen(dias)
     if not datos["totales"]:
@@ -207,14 +249,30 @@ def consejos(dias: int = 30, user: dict = Depends(usuario_actual)):
     return ia.aconsejar(datos, dias)
 
 
-# ---------- Frontend (SPA) ----------
-if os.path.isdir(os.path.join(config.STATIC_DIR, "assets")):
-    app.mount("/assets", StaticFiles(directory=os.path.join(config.STATIC_DIR, "assets")), name="assets")
+# ---------- Frontend (SPA + PWA) ----------
+_assets = os.path.join(config.STATIC_DIR, "assets")
+if os.path.isdir(_assets):
+    app.mount("/assets", StaticFiles(directory=_assets), name="assets")
+
+# Archivos de la raíz del build (service worker, manifest, íconos) — lista blanca
+_RAIZ = {"sw.js", "manifest.webmanifest", "registerSW.js", "favicon.svg", "favicon.ico",
+         "pwa-64x64.png", "pwa-192x192.png", "pwa-512x512.png", "maskable-icon-512x512.png",
+         "apple-touch-icon-180x180.png"}
 
 
 @app.get("/{path:path}", include_in_schema=False)
 def spa(path: str):
+    if path in _RAIZ or path.startswith("workbox-"):
+        archivo = os.path.join(config.STATIC_DIR, os.path.basename(path))
+        if os.path.isfile(archivo):
+            # El service worker nunca debe quedar cacheado por el navegador
+            headers = {"Cache-Control": "no-cache"} if path in ("sw.js", "registerSW.js") else None
+            media = "application/manifest+json" if path.endswith(".webmanifest") else None
+            return FileResponse(archivo, headers=headers, media_type=media)
+        raise HTTPException(404)
+    if path.startswith("api/"):
+        raise HTTPException(404)
     index = os.path.join(config.STATIC_DIR, "index.html")
     if os.path.isfile(index):
-        return FileResponse(index)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
     return JSONResponse({"detail": "Frontend no compilado"}, status_code=404)

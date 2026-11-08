@@ -18,7 +18,7 @@ COPY backend/ ./
 COPY --from=frontend /fe/dist ./static
 
 # Falla el build si el backend no importa (no hay Python en la máquina local)
-RUN python -c "import main, ia, db, fabric; print('backend OK')"
+RUN python -c "import main, ia, db, fabric, outbox; print('backend OK')"
 
 RUN useradd --system --uid 10001 app
 USER app

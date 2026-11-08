@@ -1,0 +1,105 @@
+export const TIPOS = ["Fijo", "Variable Necesario", "Variable Hormiga"];
+export const METODOS = ["TC", "TD", "Yape-Plin", "Efectivo"];
+export const CATEGORIAS = ["Alimentación", "Transporte", "Vivienda", "Servicios", "Salud", "Educación",
+  "Entretenimiento", "Ropa", "Suscripciones", "Mascotas", "Regalos", "Otros"];
+export const ENTIDADES = ["BCP", "Interbank", "BBVA", "Scotiabank", "BanBif", "Yape", "Plin", "Efectivo"];
+
+// Ícono y tono (hue HSL) por categoría: identidad visual consistente en lista, chips y resumen
+export const CATEGORIA_META = {
+  "Alimentación": { emoji: "🍽️", h: 24 },
+  "Transporte": { emoji: "🚕", h: 45 },
+  "Vivienda": { emoji: "🏠", h: 200 },
+  "Servicios": { emoji: "💡", h: 52 },
+  "Salud": { emoji: "💊", h: 350 },
+  "Educación": { emoji: "📚", h: 230 },
+  "Entretenimiento": { emoji: "🎬", h: 280 },
+  "Ropa": { emoji: "👕", h: 320 },
+  "Suscripciones": { emoji: "🔁", h: 260 },
+  "Mascotas": { emoji: "🐾", h: 30 },
+  "Regalos": { emoji: "🎁", h: 340 },
+  "Otros": { emoji: "🧾", h: 170 },
+};
+export const metaCategoria = (c) => CATEGORIA_META[c] || { emoji: "🧾", h: 170 };
+
+export const hoyLima = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
+
+export const mesLima = () =>
+  new Intl.DateTimeFormat("es-PE", { timeZone: "America/Lima", month: "long" }).format(new Date());
+
+/** "Hoy", "Ayer" o "lun. 3 nov." para encabezados de la lista */
+export function etiquetaDia(iso) {
+  const hoy = hoyLima();
+  const ayer = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date(Date.now() - 864e5));
+  if (iso === hoy) return "Hoy";
+  if (iso === ayer) return "Ayer";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Intl.DateTimeFormat("es-PE", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })
+    .format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/** Agrupa gastos por fecha_gasto (ya vienen ordenados desc) con subtotal en PEN */
+export function agruparPorDia(gastos) {
+  const grupos = [];
+  for (const g of gastos) {
+    let grupo = grupos[grupos.length - 1];
+    if (!grupo || grupo.fecha !== g.fecha_gasto) grupos.push((grupo = { fecha: g.fecha_gasto, items: [], totalPEN: 0 }));
+    grupo.items.push(g);
+    if (g.moneda === "PEN") grupo.totalPEN += g.monto_propio ?? g.monto_total;
+  }
+  return grupos;
+}
+
+export const fmt = (monto, moneda = "PEN") =>
+  new Intl.NumberFormat("es-PE", { style: "currency", currency: moneda }).format(monto || 0);
+
+/** fetch JSON. Error de red → err.status undefined (la cola offline lo usa para decidir). */
+export async function api(path, opts = {}) {
+  let r;
+  try {
+    r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  } catch {
+    throw Object.assign(new Error("Sin conexión"), { status: undefined });
+  }
+  if (r.status === 204) return null;
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const detalle = Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join(". ") : data.detail;
+    throw Object.assign(new Error(detalle || "Error"), { status: r.status, codigo: data.codigo });
+  }
+  return data;
+}
+
+export const store = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* sin storage */ } },
+};
+
+export const nuevoId = () =>
+  crypto.randomUUID?.() ??
+  "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
+    (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16));
+
+// Reduce la foto a máx. 1600 px en JPEG para que el envío sea rápido
+export function prepararImagen(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const escala = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * escala);
+      c.height = Math.round(img.height * escala);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve({ imagen_base64: c.toDataURL("image/jpeg", 0.85), mime_type: "image/jpeg" });
+    };
+    img.onerror = () => {
+      // El navegador no pudo decodificarla (p. ej. HEIC en Android): se envía tal cual
+      URL.revokeObjectURL(url);
+      const fr = new FileReader();
+      fr.onload = () => resolve({ imagen_base64: fr.result, mime_type: file.type || "image/jpeg" });
+      fr.readAsDataURL(file);
+    };
+    img.src = url;
+  });
+}

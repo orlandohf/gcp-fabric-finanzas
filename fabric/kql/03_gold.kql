@@ -1,0 +1,45 @@
+// =====================================================================
+// GOLD — estado actual de cada gasto (dedupe CDC) y vistas de negocio.
+// OneLake availability expone gastos_silver como Delta en el Lakehouse → Power BI Direct Lake.
+// =====================================================================
+
+// Estado actual por gasto: la última versión gana (resuelve duplicados por reintentos y desorden)
+.create-or-alter materialized-view with (backfill = true, folder = "gold",
+    docstring = "Última versión de cada gasto (incluye DELETE; filtrar con fn_gastos_actuales)")
+gastos_ultima_version on table gastos_silver
+{
+    gastos_silver
+    | summarize arg_max(version_timestamp, *) by id
+}
+
+.create-or-alter function with (folder = "gold", docstring = "Gastos vigentes (sin borrados)")
+fn_gastos_actuales() {
+    materialized_view("gastos_ultima_version")
+    | where op_type != "DELETE"
+}
+
+.create-or-alter function with (folder = "gold", docstring = "KPIs del mes en curso (hora Lima) en PEN")
+fn_kpis_mes() {
+    let inicio = startofmonth(datetime_utc_to_local(now(), "America/Lima"));
+    fn_gastos_actuales()
+    | where fecha_gasto >= inicio
+    | summarize gasto_real_pen = sum(monto_real_pen),
+                hormiga_pen    = sumif(monto_real_pen, tipo_gasto == "Variable Hormiga"),
+                por_cobrar_pen = sum(por_cobrar * pen_por_unidad),
+                n              = count()
+    | extend pct_hormiga = round(100.0 * hormiga_pen / gasto_real_pen, 1)
+}
+
+.create-or-alter function with (folder = "gold", docstring = "Gasto diario vs promedio móvil de 30 días")
+fn_gasto_diario(dias: int = 90) {
+    fn_gastos_actuales()
+    | where fecha_gasto > ago(dias * 1d)
+    | make-series gasto_pen = sum(monto_real_pen) default = 0 on fecha_gasto step 1d
+    | extend promedio_30d = series_fir(gasto_pen, repeat(1, 30), true, false)   // media móvil 30 días
+    | mv-expand dia = fecha_gasto to typeof(datetime), gasto_pen to typeof(real), promedio_30d to typeof(real)
+    | extend anomalia = gasto_pen > 2 * promedio_30d and promedio_30d > 0
+    | project dia, gasto_pen, promedio_30d, anomalia
+}
+
+// Habilitar OneLake availability (Silver → Delta en OneLake, para el Lakehouse y Direct Lake)
+.alter-merge table gastos_silver policy mirroring dataformat = parquet with (IsEnabled = true)
