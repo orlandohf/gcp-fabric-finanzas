@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
 const PASOS = [
-  { icono: "📷", titulo: "Escanea y listo", texto: "Toca «Escanear foto o boucher con IA» y toma una foto del voucher, ticket, captura de Yape/Plin o incluso del producto. La IA llena el formulario por ti." },
+  { icono: "⚡", titulo: "Registra en segundos", texto: "En el inicio ya tienes el formulario: escribe el monto, en qué fue, toca la categoría y Guardar. La app recuerda tu último método de pago y banco, y sugiere si el gasto es fijo según la categoría." },
+  { icono: "📷", titulo: "O escanéalo", texto: "¿Tienes el voucher, ticket o captura de Yape/Plin? Toca «Escanear» arriba del formulario y la IA lo llena por ti." },
   { icono: "✅", titulo: "Revisa antes de guardar", texto: "La IA puede equivocarse: confirma el monto, la categoría y el método de pago. Si la confianza es baja, verás un aviso amarillo." },
   { icono: "🐜", titulo: "Tipos de gasto", texto: "Fijo: se repite cada mes (alquiler, servicios). Variable Necesario: no es mensual pero sí necesario (súper, salud). Variable Hormiga: pequeños antojos que se acumulan (café, snacks, delivery)." },
   { icono: "📊", titulo: "Resumen e IA", texto: "En la pestaña «Resumen e IA» ves tus gastos por categoría y método de pago, y puedes pedir consejos personalizados de ahorro." },

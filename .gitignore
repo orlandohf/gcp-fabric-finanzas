@@ -21,3 +21,6 @@ __pycache__/
 # Node
 node_modules/
 dist/
+
+# Claude Code (permisos personales)
+.claude/settings.local.json
