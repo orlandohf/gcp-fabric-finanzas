@@ -129,6 +129,10 @@ Arquitectura completa, decisiones de diseño y guía de estudio para certificaci
 
 ---
 
+## Licencia
+
+[MIT](LICENSE) © 2026 Orlando Hallasi. Puedes usar, copiar y modificar este código citando la autoría; se entrega "tal cual", sin garantía.
+
 ## Estructura del repositorio
 
 ```

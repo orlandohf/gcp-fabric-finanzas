@@ -575,6 +575,17 @@ La cadena del Custom Endpoint de PRD se obtuvo con `GET …/eventstreams/{id}/so
 | **Deployment pipelines** | Promueve contenido Dev → Test → Prod en el portal, con reglas por etapa | Equipos sin pipeline de código |
 | **`fabric-cicd`** (Python) + service principal | Despliega desde el repo con parametrización (`parameter.yml`) | Automatización completa desde GitHub Actions |
 
+**Implementación actual (sin service principal):** registrar apps en el tenant corporativo requiere permisos de directorio
+("Insufficient privileges"). Mientras tanto:
+- KQL: `fabric/scripts/desplegar_kql.ps1 -Entorno test|prd` con la sesión `az` del desarrollador (idempotente, con confirmación para PRD).
+- Ítems: Git integration (credencial de usuario + token de GitHub) y Deployment pipelines con **implementación selectiva**
+  (no se promueve el Eventstream, porque sus conexiones son propias de cada entorno).
+
+> 📘 **Para el examen (DP-700):** Git integration admite Azure DevOps y GitHub; los Deployment pipelines comparan etapas
+> (*compare*), permiten **implementación selectiva** y **reglas de implementación** (*deployment rules*) para cambiar
+> orígenes de datos/parámetros por etapa; la automatización por API con service principal exige el *tenant setting*
+> correspondiente y que el SP sea miembro del workspace.
+
 Regla de oro: **un solo escritor por rama/workspace** (o se edita en el portal, o despliega el pipeline). La automatización con service principal requiere el *tenant setting* **"Service principals can use Fabric APIs"** y el SP como miembro del workspace.
 
 ---

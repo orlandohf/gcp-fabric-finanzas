@@ -1,0 +1,4 @@
+{
+  "test": { "queryUri": "https://<cluster-test>.kusto.fabric.microsoft.com", "database": "eh_finanzas" },
+  "prd":  { "queryUri": "https://<cluster-prd>.kusto.fabric.microsoft.com", "database": "eh_finanzas" }
+}

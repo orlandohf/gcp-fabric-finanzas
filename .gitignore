@@ -29,3 +29,4 @@ infra-gcp/backend.hcl
 # Contexto privado de Claude Code (no se publica)
 .claude/
 CLAUDE.md
+fabric/entornos.local.json

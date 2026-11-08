@@ -35,7 +35,26 @@ Orden: `01_bronze.kql` → `02_silver.kql` → `03_gold.kql` → `99_verificacio
 (verificado re-ejecutándolos completos en TEST y PRD). Cada comando de control empieza con `.` y se envía por separado
 a `POST {queryUri}/v1/rest/mgmt` con un token de `https://kusto.kusto.windows.net`.
 
-## CI/CD (siguiente paso)
+## Desplegar los scripts KQL (sin service principal)
+```powershell
+# 1. Copiar fabric/entornos.local.json.example a fabric/entornos.local.json y completar los queryUri (no se versiona)
+# 2. Con az login en el tenant de Fabric:
+powershell -ExecutionPolicy Bypass -File fabricscriptsdesplegar_kql.ps1 -Entorno test
+powershell -ExecutionPolicy Bypass -File fabricscriptsdesplegar_kql.ps1 -Entorno prd     # pide confirmar escribiendo PRD
+powershell -ExecutionPolicy Bypass -File fabricscriptsdesplegar_kql.ps1 -Entorno prd -SoloVerificar
+```
+El script separa cada `.kql` en comandos de control, los envía en orden a `/v1/rest/mgmt` y termina con una verificación
+(Bronze, Silver y gastos vigentes).
+
+## Promoción TEST → PRD en el portal (sin service principal)
+1. **Git integration** en `<workspace-test>`: *Configuración del área de trabajo › Integración de Git › GitHub* (con un
+   token personal de GitHub de alcance *Contents: read/write* sobre este repo), rama `fabric-dev`, carpeta `fabric/workspace`.
+   Cada cambio hecho en el portal se guarda con *Control de código fuente › Confirmar*.
+2. **Deployment pipeline** con dos etapas: *Test* = `<workspace-test>`, *Production* = `<workspace-prd>`.
+   Promover con **implementación selectiva**: solo la base KQL / Eventhouse. **No** promover el Eventstream: su destino
+   apunta al Eventhouse de su propio entorno y su Custom Endpoint tiene otra cadena de conexión.
+
+## CI/CD automático (futuro, requiere service principal)
 Requiere un **service principal** de Entra ID con rol en ambos workspaces y el tenant setting
 "Service principals can use Fabric APIs". Con eso, GitHub Actions:
 1. en PR: valida los `.kql` contra TEST;
