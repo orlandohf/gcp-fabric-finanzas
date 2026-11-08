@@ -1,35 +1,43 @@
 # Microsoft Fabric — Mis Gastos (TEST y PRD)
 
+Tenant de Fabric: <tenant> · Capacidad: **Trial** (`<id-capacidad>`)
+
 ## Flujo de datos
 ```
-Cloud Run (outbox) ──Kafka──▶ Eventstream ──▶ Eventhouse (KQL DB "finanzas")
-                                               ├─ Bronze  raw_gastos           (01_bronze.kql)
-                                               ├─ Silver  gastos_silver        (02_silver.kql, update policy)
-                                               └─ Gold    gastos_ultima_version + fn_*  (03_gold.kql)
-                                                           └─ OneLake availability → Lakehouse (Delta) → Power BI Direct Lake
+Cloud Run (outbox) ──Kafka──▶ Eventstream es_finanzas_gcp ──(ProcessedIngestion, streaming)──▶ Eventhouse eh_finanzas
+                                                              ├─ Bronze  raw_gastos            (01_bronze.kql)
+                                                              ├─ Silver  gastos_silver         (02_silver.kql, update policy)
+                                                              └─ Gold    gastos_ultima_version + fn_*   (03_gold.kql)
+                                                                          └─ OneLake availability → Lakehouse (Delta) → Power BI Direct Lake
 ```
 
 ## Entornos
 | | TEST | PRD |
 |---|---|---|
-| Workspace | `finanzas-test` | `finanzas-prd` |
-| Eventstream | `es_gastos` (fuente: Custom Endpoint TEST) | `es_gastos` (fuente: Custom Endpoint PRD) |
-| ¿Quién envía datos? | Generador de eventos sintéticos (`scripts/generar_eventos.py`) | Cloud Run producción |
-| ¿Quién cambia los ítems? | Tú, en el portal (Git integration → rama `fabric-dev`) | **Solo** GitHub Actions (`fabric-cicd`) |
-| Secreto de conexión | GitHub Environment `fabric-test` | Secret Manager GCP + GitHub Environment `fabric-prd` (aprobación manual) |
+| Workspace | `test_wt` (`<id-workspace-test>`) | `finanzas-prd` (`<id-workspace-prd>`) |
+| Eventhouse / KQL DB | `eh_finanzas` · `https://<cluster>.kusto.fabric.microsoft.com` | `eh_finanzas` · `https://<cluster>.kusto.fabric.microsoft.com` |
+| Eventstream | `es_finanzas_gcp` (fuente Custom Endpoint `cloudrun-gastos`) | `es_finanzas_gcp` (clonado de TEST vía API) |
+| ¿Quién envía datos? | Eventos sintéticos / pruebas manuales | Cloud Run producción (`FABRIC_ENTORNO=prd`) |
+| ¿Quién cambia los ítems? | Tú, en el portal | **Solo** el pipeline (CI/CD) |
 
-## CI/CD
-1. Trabajas en `finanzas-test` (conectado a Git, carpeta `/fabric/workspace`) y haces *commit* desde el portal a `fabric-dev`.
-2. PR `fabric-dev` → `main`: CI valida estructura y que los `.kql` sean idempotentes.
-3. Merge a `main`: GitHub Actions
-   - despliega los ítems con [`fabric-cicd`](https://microsoft.github.io/fabric-cicd/) al workspace TEST (verificación) y,
-   - tras **aprobación manual** del environment `fabric-prd`, al workspace PRD;
-   - ejecuta `fabric/kql/0*.kql` en el Eventhouse del entorno (idempotentes) y `99_verificacion.kql`.
-4. Valores que cambian por entorno (IDs de Eventhouse/Lakehouse, conexiones) → `fabric/parameter.yml`.
+## Lecciones aprendidas (no repetir)
+- El destino Eventhouse del Eventstream crea `raw_gastos` con **fechas como `string`** y columnas de sistema
+  (`EventProcessedUtcTime`, `PartitionId`, `EventEnqueuedUtcTime`). Bronze se respeta tal cual; Silver tipa.
+- `raw_gastos` recibe **ingesta en streaming** → la **update policy no puede hacer `join`/`lookup` a otras tablas ni usar
+  `ingestion_time()`** (falla con un genérico `Request is invalid`). Por eso Silver usa `now()` y la conversión USD→PEN
+  vive en Gold (`fn_gastos_actuales`).
+- En KQL el literal `1` es `long`: castear con `toint()` cuando la columna destino es `int` (la update policy exige esquema exacto).
+- `.create-or-alter materialized-view ... backfill` falla si la vista ya existe → usar `.create ifnotexists`.
+- Consultar la vista materializada **por nombre** (no `materialized_view()`) para incluir el delta aún no materializado.
 
-Reglas: un solo "escritor" por rama; nunca dos operaciones Git simultáneas sobre un workspace; desplegar cada ítem con los ítems que referencia.
+## Ejecutar los scripts KQL
+Orden: `01_bronze.kql` → `02_silver.kql` → `03_gold.kql` → `99_verificacion.kql`. Todos son **idempotentes**
+(verificado re-ejecutándolos completos en TEST y PRD). Cada comando de control empieza con `.` y se envía por separado
+a `POST {queryUri}/v1/rest/mgmt` con un token de `https://kusto.kusto.windows.net`.
 
-## Orden de ejecución de los scripts KQL
-`01_bronze.kql` → `02_silver.kql` → `03_gold.kql` → `99_verificacion.kql` (cada comando de control por separado en el KQL queryset).
-
-> Los eventos v1 (antes de la outbox) no traen `op_type`/`version`: Silver los normaliza como `INSERT` versión 1.
+## CI/CD (siguiente paso)
+Requiere un **service principal** de Entra ID con rol en ambos workspaces y el tenant setting
+"Service principals can use Fabric APIs". Con eso, GitHub Actions:
+1. en PR: valida los `.kql` contra TEST;
+2. en merge a `main`: aplica `fabric/kql/0*.kql` en TEST y, tras **aprobación manual** (environment `fabric-prd`), en PRD;
+   y despliega los ítems (Eventstream, etc.) con `fabric-cicd` + `parameter.yml` para los IDs por entorno.

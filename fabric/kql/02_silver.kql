@@ -8,12 +8,14 @@
     fecha: datetime,
     moneda: string,
     pen_por_unidad: real
-) with (folder = "silver", docstring = "Tipo de cambio a PEN por moneda y fecha")
+)
 
-// Semilla: PEN = 1 (el USD se carga con el valor del día; 3.75 es solo un fallback)
-.set-or-append tipo_cambio <| datatable(fecha: datetime, moneda: string, pen_por_unidad: real) [
-    datetime(2026-01-01), "PEN", 1.0
-] | where not(toscalar(tipo_cambio | where moneda == "PEN" | count) > 0)
+.alter table tipo_cambio folder "silver"
+
+// Semilla idempotente: PEN = 1 (el USD se carga con el valor del día; 3.75 es solo el fallback de la función)
+.set-or-append tipo_cambio <|
+    datatable(fecha: datetime, moneda: string, pen_por_unidad: real) [datetime(2026-01-01), "PEN", 1.0]
+    | where toscalar(tipo_cambio | where moneda == "PEN" | count) == 0
 
 .create-merge table gastos_silver (
     id: string,
@@ -32,37 +34,52 @@
     cantidad: real,
     monto_total: real,
     monto_propio: real,
-    monto_real: real,          // lo que salió de mi bolsillo
-    por_cobrar: real,          // parte de otros aún no liquidada
+    monto_real: real,
+    por_cobrar: real,
     es_compartido: bool,
     liquidado: bool,
     pen_por_unidad: real,
     monto_real_pen: real,
+    encolado_en: datetime,
     ingestado_en: datetime
-) with (folder = "silver", docstring = "Eventos de gastos limpios y tipados (todas las versiones)")
+)
 
-.create-or-alter function with (folder = "silver", docstring = "Transformación Bronze → Silver")
+.alter table gastos_silver folder "silver"
+
+.alter table gastos_silver docstring "Eventos de gastos limpios y tipados (todas las versiones; ver gastos_ultima_version)"
+
+// IMPORTANTE: raw_gastos recibe ingesta en STREAMING desde el Eventstream. Con streaming, la update policy
+// NO puede consultar otras tablas (join/lookup) ni usar ingestion_time() → "Request is invalid".
+// Por eso: now() marca la ingesta y la conversión USD→PEN se hace en Gold (fn_gastos_actuales) con tipo_cambio.
+.create-or-alter function with (folder = "silver", docstring = "Transformación Bronze → Silver (update policy, apta para streaming)")
 fn_gastos_silver() {
-    let tc = tipo_cambio | summarize arg_max(fecha, pen_por_unidad) by moneda | project moneda, tc = pen_por_unidad;
     raw_gastos
-    | where isnotempty(id)                                    // calidad: sin id no hay gasto
-    | extend op_type           = iff(isempty(op_type), "INSERT", toupper(op_type)),
-             version           = coalesce(version, 1),
-             schema_version    = coalesce(schema_version, 1),
-             version_timestamp = coalesce(version_timestamp, fecha_registro),
-             monto_propio      = iff(es_compartido, monto_propio, real(null)),
-             liquidado         = coalesce(liquidado, false)
-    | where op_type in ("INSERT", "UPDATE", "DELETE")
-    | extend monto_real = iff(isnull(monto_propio), monto_total, monto_propio)
-    | extend por_cobrar = iff(es_compartido and not(liquidado), monto_total - monto_real, 0.0)
-    | lookup kind = leftouter tc on moneda
-    | extend pen_por_unidad = case(moneda == "PEN", 1.0, isnotnull(tc), tc, 3.75)
-    | extend monto_real_pen = round(monto_real * pen_por_unidad, 2),
-             ingestado_en   = ingestion_time()
-    | project id, op_type, version, version_timestamp, schema_version, fecha_registro, fecha_gasto,
-              categoria, concepto, tipo_gasto, metodo_pago, entidad_financiera, moneda, cantidad,
-              monto_total, monto_propio, monto_real, por_cobrar, es_compartido, liquidado,
-              pen_por_unidad, monto_real_pen, ingestado_en
+    | where isnotempty(id)                                             // calidad: sin id no hay gasto
+    | extend op = iff(isempty(op_type), "INSERT", toupper(op_type)),  // v1 no traía op_type
+             registro = todatetime(fecha_registro),
+             es_comp = coalesce(es_compartido, false)
+    | where op in ("INSERT", "UPDATE", "DELETE")
+    | extend propio = iff(es_comp, monto_propio, real(null))
+    | extend real_ = iff(isnull(propio), monto_total, propio),
+             liq = coalesce(liquidado, false)
+    | extend tasa = iff(moneda == "PEN", 1.0, real(null))             // USD: se resuelve en Gold
+    | project id,
+              op_type           = op,
+              version           = toint(coalesce(version, 1)),
+              version_timestamp = coalesce(todatetime(version_timestamp), registro),
+              schema_version    = toint(coalesce(schema_version, 1)),
+              fecha_registro    = registro,
+              fecha_gasto       = todatetime(fecha_gasto),
+              categoria, concepto, tipo_gasto, metodo_pago, entidad_financiera, moneda, cantidad, monto_total,
+              monto_propio      = propio,
+              monto_real        = real_,
+              por_cobrar        = iff(es_comp and not(liq), monto_total - real_, 0.0),
+              es_compartido     = es_comp,
+              liquidado         = liq,
+              pen_por_unidad    = tasa,
+              monto_real_pen    = round(real_ * tasa, 2),
+              encolado_en       = EventEnqueuedUtcTime,
+              ingestado_en      = now()
 }
 
 // Update policy: cada fila nueva en Bronze se transforma y se escribe en Silver en la misma transacción
@@ -77,5 +94,7 @@ fn_gastos_silver() {
 }]
 ```
 
-// Backfill de lo que ya estaba en Bronze antes de crear la policy (ejecutar UNA vez, solo si Silver está vacía)
-// .set-or-append gastos_silver <| fn_gastos_silver()
+// Backfill de lo que ya estaba en Bronze antes de crear la policy: solo si Silver está vacía (idempotente)
+.set-or-append gastos_silver <|
+    fn_gastos_silver()
+    | where toscalar(gastos_silver | count) == 0

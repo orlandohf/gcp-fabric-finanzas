@@ -69,6 +69,11 @@ resource "google_cloud_run_v2_service" "app" {
         value = var.project_id
       }
       env {
+        # Entorno de Fabric al que publica la outbox (cambiarlo crea una revisión nueva → relee el secreto)
+        name  = "FABRIC_ENTORNO"
+        value = var.fabric_entorno
+      }
+      env {
         name  = "GEMINI_MODEL"
         value = var.gemini_model
       }

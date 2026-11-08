@@ -4,7 +4,8 @@
 // =====================================================================
 
 // Estado actual por gasto: la última versión gana (resuelve duplicados por reintentos y desorden)
-.create-or-alter materialized-view with (backfill = true, folder = "gold",
+// "ifnotexists": backfill solo es válido al crear; así el script es re-ejecutable en TEST y PRD
+.create ifnotexists materialized-view with (backfill = true, folder = "gold",
     docstring = "Última versión de cada gasto (incluye DELETE; filtrar con fn_gastos_actuales)")
 gastos_ultima_version on table gastos_silver
 {
@@ -12,10 +13,16 @@ gastos_ultima_version on table gastos_silver
     | summarize arg_max(version_timestamp, *) by id
 }
 
-.create-or-alter function with (folder = "gold", docstring = "Gastos vigentes (sin borrados)")
+.create-or-alter function with (folder = "gold", docstring = "Gastos vigentes (sin borrados), con montos convertidos a PEN")
 fn_gastos_actuales() {
-    materialized_view("gastos_ultima_version")
+    // Conversión a PEN aquí (no en Silver): la update policy en streaming no puede hacer lookup
+    let tc = tipo_cambio | summarize arg_max(fecha, pen_por_unidad) by moneda | project moneda, tc = pen_por_unidad;
+    gastos_ultima_version   // por nombre = parte materializada + delta reciente (siempre al día)
     | where op_type != "DELETE"
+    | lookup kind = leftouter tc on moneda
+    | extend pen_por_unidad = coalesce(pen_por_unidad, tc, 3.75)
+    | extend monto_real_pen = coalesce(monto_real_pen, round(monto_real * pen_por_unidad, 2))
+    | project-away tc
 }
 
 .create-or-alter function with (folder = "gold", docstring = "KPIs del mes en curso (hora Lima) en PEN")
