@@ -12,11 +12,11 @@ terraform {
     }
   }
 
-  # Estado local por ahora. Para migrar a GCS más adelante:
-  # backend "gcs" {
-  #   bucket = "<bucket-tfstate>"
-  #   prefix = "finanzas"
-  # }
+  # Estado remoto (bucket creado por state_bucket.tf; versionado y privado)
+  backend "gcs" {
+    bucket = "mi-proyecto-gcp-finanzas-tfstate"
+    prefix = "finanzas"
+  }
 }
 
 provider "google" {
