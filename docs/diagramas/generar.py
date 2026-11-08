@@ -18,7 +18,7 @@ DATOS, CICD, SEGURIDAD, FINOPS, IA = "#0F766E", "#7C3AED", "#64748B", "#D97706",
 GRAFO = {
     "fontsize": "26", "fontname": "Helvetica-Bold", "fontcolor": "#0F172A",
     "pad": "0.7", "nodesep": "0.75", "ranksep": "1.3", "splines": "spline",
-    "bgcolor": "white", "labelloc": "t", "compound": "true",
+    "bgcolor": "white", "labelloc": "t", "compound": "true", "newrank": "true",
 }
 NODO = {"fontsize": "12", "fontname": "Helvetica", "fontcolor": "#0F172A"}
 ARISTA = {"fontsize": "11", "fontname": "Helvetica", "penwidth": "1.6"}
@@ -66,9 +66,7 @@ with Diagram("Mis Gastos — arquitectura", filename="arquitectura", outformat="
         cola = nodo("IndexedDB\ncola offline", ("generic.storage", "Storage"), ("onprem.database", "Postgresql"))
 
     with Cluster("Desarrollador", graph_attr=C_DEV):
-        terraform = nodo("Terraform\nplan → apply", ("onprem.iac", "Terraform"))
-        script_kql = nodo("desplegar_kql.ps1\nsesión az", ("programming.language", "Powershell", "Bash"),
-                          ("onprem.client", "User"))
+        terraform = nodo("Terraform\nplan → apply\n(infra GCP)", ("onprem.iac", "Terraform"))
 
     with Cluster("GitHub", graph_attr=C_GITHUB):
         repo = nodo("Repositorio\nrama → PR → main", ("onprem.vcs", "Github"))
@@ -110,13 +108,16 @@ with Diagram("Mis Gastos — arquitectura", filename="arquitectura", outformat="
     silver >> flecha(DATOS, "OneLake availability", "dashed") >> onelake
     onelake >> flecha(DATOS) >> powerbi
 
+    # Orden de lectura: Fabric siempre a la derecha de Google Cloud (aristas invisibles solo para el layout)
+    sql >> Edge(style="invis") >> eventstream
+    gemini >> Edge(style="invis") >> eventstream
+
     # IA (rosa)
     run >> flecha(IA, "ADC · JSON con esquema") >> gemini
 
     # Seguridad (gris)
     secretos >> flecha(SEGURIDAD, "variables de entorno", "dashed") >> run
     terraform >> flecha(SEGURIDAD, "tfstate", "dashed") >> estado
-    script_kql >> flecha(SEGURIDAD, "scripts KQL\nidempotentes", "dashed") >> bronze
 
     # FinOps (ámbar)
     scheduler >> flecha(FINOPS, "PATCH activationPolicy\n(token OAuth)") >> sql
@@ -164,7 +165,8 @@ with Diagram("Mis Gastos — flujo de datos CDC y entornos de Fabric", filename=
     with Cluster("Despliegue (sin service principal)", graph_attr=C_DEV):
         kql = nodo("desplegar_kql.ps1\n01_bronze · 02_silver · 03_gold", ("programming.language", "Powershell", "Bash"),
                    ("onprem.client", "User"))
-        pipeline = nodo("Deployment pipeline\nimplementación selectiva", ("onprem.ci", "GithubActions"))
+        pipeline = nodo("Deployment pipeline\nimplementación selectiva", ("azure.devops", "Pipelines"),
+                        ("onprem.ci", "Jenkins"))
 
     api >> flecha(DATOS, "1 · INSERT / UPDATE / DELETE") >> tabla_gastos
     api >> flecha(DATOS, "2 · evento en la\nmisma transacción") >> tabla_outbox
