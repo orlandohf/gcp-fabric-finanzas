@@ -16,6 +16,13 @@ resource "google_project_iam_member" "run_sql_client" {
   }
 }
 
+# Gemini en Vertex AI (escaneo de boucher y consejos)
+resource "google_project_iam_member" "run_vertex_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.run.email}"
+}
+
 resource "google_cloud_run_v2_service" "app" {
   name                = "finanzas-app"
   location            = var.region
@@ -56,6 +63,18 @@ resource "google_cloud_run_v2_service" "app" {
       env {
         name  = "APP_TIMEZONE"
         value = var.schedule_timezone
+      }
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "GEMINI_MODEL"
+        value = var.gemini_model
+      }
+      env {
+        name  = "GEMINI_LOCATION"
+        value = var.gemini_location
       }
 
       dynamic "env" {

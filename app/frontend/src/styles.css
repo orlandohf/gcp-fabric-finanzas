@@ -136,3 +136,62 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 .tag { font-size: .72rem; padding: 2px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); }
 .tag.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+
+/* ---------- v2: IA, resumen, tutorial ---------- */
+.acciones { display: flex; gap: 8px; align-items: center; }
+.btn.icono { width: 44px; padding: 0; font-size: 1.05rem; }
+.center-text { text-align: center; }
+.capital { text-transform: capitalize; }
+
+.tabs, .segmentado {
+  display: flex; gap: 4px; padding: 4px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+}
+.tabs button, .segmentado button {
+  flex: 1; font: inherit; font-weight: 600; font-size: .9rem; color: var(--muted);
+  background: transparent; border: 0; border-radius: 9px; padding: 9px 12px; min-height: 40px; cursor: pointer;
+}
+.tabs button.on, .segmentado button.on { background: var(--primary-soft); color: var(--primary); }
+.segmentado { width: 100%; }
+
+.btn.scan {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 52px; font-size: 1rem;
+  background: var(--primary-soft); color: var(--primary);
+  border: 1.5px dashed var(--primary);
+}
+.btn.scan:disabled { cursor: wait; opacity: .85; }
+.deteccion { margin-top: 10px; }
+
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid currentColor; border-right-color: transparent;
+  display: inline-block; animation: girar .7s linear infinite; vertical-align: -3px;
+}
+@keyframes girar { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+
+.barras { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.barras li { display: grid; gap: 5px; }
+.barra { height: 8px; border-radius: 999px; background: var(--bg); overflow: hidden; }
+.barra span { display: block; height: 100%; border-radius: 999px; background: var(--primary); min-width: 2px; }
+
+.card.ia { border-color: var(--primary); }
+.analisis { display: grid; gap: 10px; margin-top: 4px; }
+.analisis > p { margin: 0; }
+.consejos { margin: 0; padding-left: 1.2rem; display: grid; gap: 12px; }
+.consejos p { margin: 4px 0 6px; color: var(--muted); }
+.tag.ok { background: var(--primary-soft); color: var(--primary); border-color: transparent; }
+
+.modal-fondo {
+  position: fixed; inset: 0; z-index: 10; background: rgb(0 0 0 / .45);
+  display: grid; place-items: center; padding: 16px;
+}
+.modal { width: 100%; max-width: 420px; display: grid; gap: 12px; text-align: center; padding: 24px; }
+.modal h2 { margin: 0; font-size: 1.2rem; }
+.modal p { margin: 0; color: var(--muted); }
+.modal .row-between { margin-top: 6px; }
+.tut-icono { font-size: 2.6rem; line-height: 1; }
+.puntos { display: flex; justify-content: center; gap: 6px; }
+.puntos button { width: 8px; height: 8px; padding: 0; border: 0; border-radius: 50%; background: var(--border); cursor: pointer; }
+.puntos button.on { background: var(--primary); width: 22px; border-radius: 999px; }

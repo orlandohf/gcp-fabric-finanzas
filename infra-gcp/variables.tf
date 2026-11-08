@@ -45,13 +45,24 @@ variable "schedule_timezone" {
 variable "sql_start_cron" {
   description = "Cron para encender Cloud SQL."
   type        = string
-  default     = "0 8 * * *"
+  default     = "0 6 * * *"
 }
 
 variable "sql_stop_cron" {
   description = "Cron para apagar Cloud SQL."
   type        = string
-  default     = "0 22 * * *"
+  default     = "0 23 * * *"
+}
+
+# --- IA (Gemini en Vertex AI) ---
+variable "gemini_model" {
+  type    = string
+  default = "gemini-3-flash-preview"
+}
+
+variable "gemini_location" {
+  type    = string
+  default = "global"
 }
 
 # --- Secretos externos (opcionales en el primer apply; se guarda "PENDIENTE") ---

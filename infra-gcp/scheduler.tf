@@ -1,4 +1,4 @@
-# FinOps: enciende Cloud SQL a las 08:00 y lo apaga a las 22:00 (America/Lima)
+# FinOps: enciende Cloud SQL a las 06:00 y lo apaga a las 23:00 (America/Lima)
 resource "google_service_account" "sql_scheduler" {
   account_id   = "sql-scheduler"
   display_name = "Cloud Scheduler - encendido/apagado de Cloud SQL"

@@ -99,6 +99,43 @@ def listar_gastos(limite: int = 50) -> list[dict]:
         ).fetchall()
 
 
+def resumen(dias: int) -> dict:
+    """Agregados del período para el panel de resumen y para la IA (no envía filas sueltas)."""
+    filtro = "fecha_gasto >= (now() AT TIME ZONE 'America/Lima')::date - %(dias)s::int"
+    p = {"dias": dias}
+
+    def q(conn, sql):
+        return conn.execute(sql, p).fetchall()
+
+    with conexion() as conn:
+        def agrupar(col):
+            return q(conn, f"""
+                SELECT {col} AS clave, moneda, COUNT(*) AS n, SUM(monto_total)::float AS total
+                FROM gastos WHERE {filtro} GROUP BY 1, 2 ORDER BY total DESC""")
+
+        totales = q(conn, f"""
+            SELECT moneda, COUNT(*) AS n, SUM(monto_total)::float AS total,
+                   SUM(CASE WHEN es_compartido THEN monto_total ELSE 0 END)::float AS compartido
+            FROM gastos WHERE {filtro} GROUP BY moneda""")
+        por_mes = q(conn, f"""
+            SELECT to_char(fecha_gasto, 'YYYY-MM') AS mes, moneda, SUM(monto_total)::float AS total
+            FROM gastos WHERE {filtro} GROUP BY 1, 2 ORDER BY 1""")
+        top_hormiga = q(conn, f"""
+            SELECT lower(concepto) AS concepto, COUNT(*) AS veces, SUM(monto_total)::float AS total
+            FROM gastos WHERE {filtro} AND tipo_gasto = 'Variable Hormiga' AND moneda = 'PEN'
+            GROUP BY 1 ORDER BY total DESC LIMIT 8""")
+
+        return {
+            "dias": dias,
+            "totales": totales,
+            "por_categoria": agrupar("categoria"),
+            "por_tipo": agrupar("tipo_gasto"),
+            "por_metodo": agrupar("metodo_pago"),
+            "por_mes": por_mes,
+            "top_hormiga": top_hormiga,
+        }
+
+
 def pendientes_fabric(limite: int = 100) -> list[dict]:
     with conexion() as conn:
         return conn.execute(

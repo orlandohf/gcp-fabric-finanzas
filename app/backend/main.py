@@ -12,9 +12,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
+import base64
+import binascii
+
 import config
 import db
 import fabric
+import ia
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
@@ -45,6 +49,11 @@ def _bd_no_disponible(_req, _exc):
         status_code=503,
         content={"detail": "La base de datos está en horario de descanso (22:00–08:00) o no disponible."},
     )
+
+
+@app.exception_handler(ia.ErrorIA)
+def _error_ia(_req, _exc):
+    return JSONResponse(status_code=502, content={"detail": "La IA no pudo procesar la solicitud. Intenta de nuevo."})
 
 
 # ---------- Auth ----------
@@ -157,6 +166,45 @@ def reenviar(user: dict = Depends(usuario_actual)):
             db.marcar_enviado(g["id"])
             ok += 1
     return {"pendientes": len(pendientes), "reenviados": ok}
+
+
+# ---------- IA (Gemini) ----------
+MIME_PERMITIDOS = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+MAX_IMAGEN = 7 * 1024 * 1024
+
+
+class ImagenIn(BaseModel):
+    imagen_base64: str = Field(max_length=10_000_000)
+    mime_type: str = "image/jpeg"
+
+
+@app.post("/api/ia/escanear")
+def escanear(img: ImagenIn, user: dict = Depends(usuario_actual)):
+    if img.mime_type not in MIME_PERMITIDOS:
+        raise HTTPException(415, "Formato de imagen no soportado")
+    try:
+        datos = base64.b64decode(img.imagen_base64.split(",")[-1], validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "Imagen inválida")
+    if len(datos) > MAX_IMAGEN:
+        raise HTTPException(413, "Imagen demasiado grande")
+    return ia.escanear(datos, img.mime_type)
+
+
+@app.get("/api/resumen")
+def resumen(dias: int = 30, user: dict = Depends(usuario_actual)):
+    return db.resumen(max(7, min(dias, 365)))
+
+
+@app.post("/api/ia/consejos")
+def consejos(dias: int = 30, user: dict = Depends(usuario_actual)):
+    dias = max(7, min(dias, 365))
+    datos = db.resumen(dias)
+    if not datos["totales"]:
+        return {"resumen": "Aún no hay gastos en este período.", "alerta": "",
+                "consejos": [{"titulo": "Empieza a registrar", "ahorro_estimado_mensual": 0,
+                              "detalle": "Registra tus gastos unos días (usa el escaneo con IA para ir rápido) y vuelve a pedir el análisis."}]}
+    return ia.aconsejar(datos, dias)
 
 
 # ---------- Frontend (SPA) ----------
