@@ -17,10 +17,10 @@ permissions:
   id-token: write # necesario para Workload Identity Federation
 
 env:
-  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: ${{ vars.GCP_REGION }}
   SERVICE: finanzas-app
-  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/finanzas/finanzas-app
+  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/finanzas/finanzas-app
 
 jobs:
   test:
@@ -76,10 +76,17 @@ jobs:
       - name: Autenticar en GCP (WIF)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.DEPLOYER_SA }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.DEPLOYER_SA }}
 
       - uses: google-github-actions/setup-gcloud@v2
+
+      # Repo público = logs públicos: ocultar la URL del servicio antes de que gcloud la imprima
+      - name: Enmascarar URL del servicio
+        run: |
+          URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')
+          echo "::add-mask::${URL}"
+          echo "::add-mask::${URL#https://}"
 
       - name: Configurar Docker para Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
@@ -99,5 +106,5 @@ jobs:
 
       - name: Smoke test
         run: |
-          URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)')
+          URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')
           curl -fsS "${URL}/api/health"

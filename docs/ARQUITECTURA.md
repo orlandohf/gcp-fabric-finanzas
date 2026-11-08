@@ -589,6 +589,9 @@ flowchart LR
 ```
 - `paths` limita la ejecución a cambios en `app/**` y en el propio workflow.
 - `concurrency` evita dos despliegues simultáneos.
+- **Repo público ⇒ logs públicos**: el ID del proyecto, el proveedor WIF y la SA de despliegue se guardan como **secrets**
+  (GitHub los enmascara como `***` en cualquier línea del log) y la URL del servicio se oculta con `::add-mask::`
+  antes de que `gcloud` la imprima. Los secrets **no** se exponen a workflows disparados desde forks.
 - El Dockerfile **importa el backend durante el build** (`python -c "import main, …"`) para fallar temprano.
 - Build multi-stage: `node:22-alpine` compila el frontend → `python:3.12-slim` con usuario no root.
 
