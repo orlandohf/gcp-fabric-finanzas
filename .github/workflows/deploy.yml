@@ -55,4 +55,4 @@ jobs:
       - name: Smoke test
         run: |
           URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)')
-          curl -fsS "${URL}/healthz"
+          curl -fsS "${URL}/api/health"

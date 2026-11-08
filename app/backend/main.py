@@ -118,8 +118,8 @@ def _evento(g: dict) -> dict:
     }
 
 
-@app.get("/healthz")
-def healthz():
+@app.get("/api/health")  # /healthz está reservado por el frontend de Cloud Run
+def health():
     return {"ok": True}
 
 
