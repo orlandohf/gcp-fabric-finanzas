@@ -84,9 +84,13 @@ jobs:
       # Repo público = logs públicos: ocultar la URL del servicio antes de que gcloud la imprima
       - name: Enmascarar URL del servicio
         run: |
-          URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')
-          echo "::add-mask::${URL}"
-          echo "::add-mask::${URL#https://}"
+          # Cloud Run tiene 2 URLs: la clásica (hash) y la determinista (<servicio>-<n.º de proyecto>.<región>.run.app)
+          gcloud run services describe "${SERVICE}" --region "${REGION}" --project "${PROJECT_ID}" --format=json \
+            | jq -r '.status.url, (.metadata.annotations["run.googleapis.com/urls"] // "[]" | fromjson[])' \
+            | sort -u | while read -r u; do
+                echo "::add-mask::${u}"; echo "::add-mask::${u#https://}"
+                h="${u#https://}"; echo "::add-mask::${h%%.*}"   # subdominio (incluye el n.º de proyecto)
+              done
 
       - name: Configurar Docker para Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
