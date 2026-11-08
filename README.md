@@ -125,6 +125,8 @@ flowchart LR
   A -- "eventos en tiempo real" --> F["Microsoft Fabric<br/>Eventstream → Eventhouse"]
 ```
 
+<p align="center"><a href="docs/diagramas/arquitectura.png"><img src="docs/diagramas/arquitectura.png" width="820" alt="Diagrama de arquitectura"></a></p>
+
 Arquitectura completa, decisiones de diseño y guía de estudio para certificaciones en **[docs/ARQUITECTURA.md](docs/ARQUITECTURA.md)**.
 
 ---

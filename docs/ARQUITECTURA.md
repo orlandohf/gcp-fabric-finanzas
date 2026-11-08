@@ -40,6 +40,36 @@
 
 ### 1.2 Diagrama de arquitectura
 
+![Arquitectura de Mis Gastos: cliente PWA, Google Cloud, Microsoft Fabric y CI/CD](diagramas/arquitectura.png)
+
+| Color de la flecha | Significado |
+|---|---|
+| 🟢 Verde azulado | **Flujo de datos**: requests, escrituras, eventos y capas Medallion |
+| 🟣 Violeta | **CI/CD**: push, OIDC → STS (WIF), `docker push`, `gcloud run deploy` |
+| ⚪ Gris (punteado) | **Seguridad / configuración**: secretos inyectados, estado de Terraform |
+| 🟠 Ámbar | **FinOps**: Cloud Scheduler enciende/apaga Cloud SQL |
+| 🩷 Rosa | **IA**: Cloud Run → Vertex AI (Gemini) con ADC |
+
+Línea continua = llamada síncrona · discontinua = asíncrona/configuración · gruesa = ruta crítica de eventos.
+
+### 1.3 Diagrama del flujo de datos CDC y de los entornos de Fabric
+
+![Flujo CDC: outbox transaccional, publisher, Kafka, Eventstream y Medallion en PRD; entorno TEST y despliegue](diagramas/flujo-datos-cdc.png)
+
+Cómo leerlo:
+1. **1–2:** la API escribe el gasto y su evento en **la misma transacción** (Transactional Outbox).
+2. **3:** el publisher toma los pendientes con `FOR UPDATE SKIP LOCKED`.
+3. **4:** los publica por protocolo Kafka con **clave = id del gasto**, lo que da orden por gasto y entrega *at-least-once*.
+4. `FABRIC_ENTORNO = prd` envía a PRD. **Bronze → Silver** ocurre con una *update policy* y **Silver → Gold** con una vista materializada `arg_max` que deduplica y quita los borrados.
+5. TEST recibe solo eventos de prueba. Los scripts KQL se aplican **primero en TEST y luego en PRD**, y el Deployment pipeline promueve solo el Eventhouse.
+
+> **Diagrams as code:** los dos diagramas se generan con [Diagrams](https://diagrams.mingrammer.com/) (Python + Graphviz)
+> desde [`docs/diagramas/generar.py`](diagramas/generar.py), con los íconos oficiales de GCP, Azure/Fabric y GitHub.
+> Al modificar ese archivo en una rama, el workflow `.github/workflows/diagramas.yml` regenera los PNG y los commitea
+> en la misma rama, así que la imagen nunca queda desactualizada respecto al código.
+
+Versión en texto del mismo diagrama (Mermaid, se renderiza en GitHub):
+
 ```mermaid
 flowchart TB
   subgraph Cliente["📱 Cliente (PWA)"]
@@ -80,7 +110,7 @@ flowchart TB
   GA -->|gcloud run deploy| CR
 ```
 
-### 1.3 Flujo de un gasto, de punta a punta
+### 1.4 Flujo de un gasto, de punta a punta
 1. El usuario completa el formulario en la PWA. El cliente genera el **UUID** del gasto.
 2. `POST /api/gastos` → FastAPI valida con Pydantic.
 3. En **una transacción** de PostgreSQL: `INSERT` en `gastos` + `INSERT` del evento en `eventos_fabric` (outbox).
