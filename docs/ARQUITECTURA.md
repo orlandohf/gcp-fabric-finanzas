@@ -30,7 +30,8 @@
 ### 1.1 Requisitos que guiaron el diseño
 | Requisito | Tipo | Consecuencia en la arquitectura |
 |---|---|---|
-| Un solo usuario, acceso restringido | Seguridad | Google OAuth + lista blanca de un correo (`ALLOWED_EMAIL`) |
+| Amigos y familia **solo por invitación**; cada uno ve únicamente lo suyo | Seguridad / privacidad | Google OAuth + lista blanca (`ALLOWED_EMAILS` en Secret Manager) + aislamiento por `usuario_id` en **todas** las consultas |
+| Costo de IA acotado con varios usuarios | FinOps | Cuota diaria de Gemini por usuario (tabla `uso_ia`, HTTP 429) |
 | Costo mínimo | FinOps | Serverless que escala a cero, BD pequeña **apagada de noche** |
 | Ningún gasto se pierde | Confiabilidad | PostgreSQL como fuente de verdad + **outbox transaccional** + **cola offline** en el teléfono |
 | Analítica en tiempo real | Datos | Eventos a **Microsoft Fabric** (Eventstream → Eventhouse KQL) |
@@ -79,8 +80,8 @@ flowchart TB
 
   subgraph GCP["Google Cloud — us-central1"]
     CR["Cloud Run<br/>finanzas-app<br/>(FastAPI + estáticos)"]
-    SQL[("Cloud SQL PostgreSQL 16<br/>db-f1-micro<br/>gastos + eventos_fabric")]
-    SM["Secret Manager<br/>5 secretos"]
+    SQL[("Cloud SQL PostgreSQL 16<br/>db-f1-micro<br/>usuarios + gastos + eventos_fabric")]
+    SM["Secret Manager<br/>6 secretos"]
     AR["Artifact Registry<br/>imágenes Docker"]
     SCH["Cloud Scheduler<br/>06:00 ON / 23:00 OFF"]
     VX["Vertex AI<br/>Gemini (global)"]
@@ -112,8 +113,8 @@ flowchart TB
 
 ### 1.4 Flujo de un gasto, de punta a punta
 1. El usuario completa el formulario en la PWA. El cliente genera el **UUID** del gasto.
-2. `POST /api/gastos` → FastAPI valida con Pydantic.
-3. En **una transacción** de PostgreSQL: `INSERT` en `gastos` + `INSERT` del evento en `eventos_fabric` (outbox).
+2. `POST /api/gastos` → FastAPI valida la sesión (correo aún invitado) y el cuerpo con Pydantic.
+3. En **una transacción** de PostgreSQL: `INSERT` en `gastos` (con el `usuario_id` **de la sesión**, nunca del cuerpo) + `INSERT` del evento en `eventos_fabric` (outbox).
 4. Tras el commit, el **publisher** envía los eventos pendientes al Eventstream (protocolo Kafka) y marca `enviado_en`.
 5. El Eventstream ingiere por streaming en la tabla **Bronze** `raw_gastos` del Eventhouse.
 6. Una **update policy** transforma cada lote a **Silver** (`gastos_silver`) en la misma transacción de ingesta.
@@ -139,7 +140,7 @@ flowchart TB
 | Identidad CI | **Workload Identity Federation** | GitHub → GCP sin llaves JSON | Llave JSON de SA | Credenciales efímeras, sin secretos de larga vida |
 | Backend | **FastAPI** + Pydantic v2 + Uvicorn | API REST, validación, OAuth | Django, Flask, Express | Tipado, validación automática, rápido |
 | Driver BD | **psycopg 3** + `psycopg_pool` | Pool de conexiones síncrono | SQLAlchemy, asyncpg | Simple, transacciones explícitas, JSONB |
-| Auth | **Authlib** (OpenID Connect con Google) | Login | Firebase Auth, IAP | Control total del callback y de la lista blanca |
+| Auth | **Authlib** (OpenID Connect con Google) | Login | Firebase Auth / Identity Platform, IAP | Control total del callback y de la lista blanca. IAP exigiría un balanceador (≈ US$ 18/mes) |
 | Frontend | **React 18** + **Vite 5** | UI | Next.js, Vue | SPA ligera servida por el mismo contenedor |
 | PWA | **vite-plugin-pwa** (Workbox) | Instalable, app shell offline | Service worker manual | Precache con hash, aviso de actualización |
 | Offline | **IndexedDB** | Cola de gastos pendientes | localStorage | Asíncrono, estructurado, mayor capacidad |
@@ -193,15 +194,75 @@ flowchart TB
 | `deletion_protection` | `true` | Evita borrados accidentales con `terraform destroy` |
 
 **Esquema (`app/backend/db.py`):**
-- `gastos`: el modelo de dominio + columnas v2 `monto_propio`, `liquidado`, `version`, `actualizado_en`.
-  Restricciones `CHECK` replican los enums de la API (defensa en profundidad).
+- `usuarios` (v3): `id UUID` (seudónimo interno), `email` único en minúsculas, `nombre`, `creado_en`, `ultimo_acceso`.
+  Se crea o actualiza en cada login (`INSERT … ON CONFLICT (email) DO UPDATE`).
+- `gastos`: el modelo de dominio + columnas v2 `monto_propio`, `liquidado`, `version`, `actualizado_en` + **`usuario_id`
+  (v3, `NOT NULL`, FK a `usuarios`)** con índice `(usuario_id, fecha_gasto DESC)`, que es exactamente el patrón de acceso
+  de la lista y de los KPIs. Restricciones `CHECK` replican los enums de la API (defensa en profundidad).
+- `uso_ia` (v3): contador `(usuario_id, dia, accion) → n` para la cuota diaria de Gemini (`INSERT … ON CONFLICT DO UPDATE
+  SET n = n + 1 RETURNING n`: atómico, sin carreras entre instancias).
 - `eventos_fabric`: la **outbox** (`op_type`, `version`, `payload JSONB`, `enviado_en`, `intentos`, `ultimo_error`) con
   un **índice parcial** `WHERE enviado_en IS NULL` para que buscar pendientes sea O(pendientes).
 - La migración es **idempotente** (`CREATE … IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`) y se serializa entre instancias
   con `pg_advisory_xact_lock`.
+- **Migración a multiusuario (expand → backfill → contract):** (1) se agrega `usuario_id` *nullable*; (2) los gastos sin dueño
+  se asignan a `ALLOWED_EMAIL` con `version + 1` y **un evento `UPDATE` por gasto** (así Fabric también aprende el dueño);
+  (3) recién entonces `ALTER COLUMN usuario_id SET NOT NULL`. Todo en la misma transacción que el resto de la migración.
 
 **KPIs exactos en SQL:** "gasto real" = `COALESCE(monto_propio, monto_total)`; los KPIs del mes usan
 `SUM(...) FILTER (WHERE ...)` y el mes en hora de Lima: `date_trunc('month', (now() AT TIME ZONE 'America/Lima')::date)`.
+
+#### 3.2.1 ¿Tiene IP pública? ¿Puedo entrar "como en SSMS"? (comparación con un SQL Server corporativo)
+
+**Sí, la instancia tiene una IPv4 pública, pero nadie puede conectarse directo a ella.** Dos ajustes lo garantizan:
+
+```hcl
+ip_configuration {
+  ipv4_enabled = true            # existe la IP pública…
+  # sin bloque authorized_networks → la lista de IPs permitidas está VACÍA: el puerto 5432 rechaza a todos
+  ssl_mode     = "ENCRYPTED_ONLY" # y cualquier conexión debe ir cifrada
+}
+```
+
+La única entrada es el **Cloud SQL Auth Proxy / connector**: un túnel que (1) te autentica con **IAM** (tu cuenta de Google
+o una Service Account con `roles/cloudsql.client`), (2) abre **mTLS** con certificados efímeros que Google rota solo y
+(3) recién entonces deja pasar el login de PostgreSQL (**usuario + contraseña**). Son **dos llaves**: identidad de Google
+**y** contraseña de la BD. Cloud Run usa el mismo mecanismo, montado como el socket Unix `/cloudsql/<connection_name>`.
+
+**La contraseña** la generó Terraform (`random_password`, 32 caracteres sin símbolos para no romper la URL), se la asignó
+al usuario `finanzas_app` (`google_sql_user`) y la guardó **dentro** del secreto `database-url`. Nadie la escribió ni la
+vio: está en Secret Manager y en el `tfstate` (por eso el estado vive en un bucket privado).
+
+**Cómo entrar desde tu PC con un cliente gráfico** (DBeaver, pgAdmin, DataGrip o la extensión de PostgreSQL de VS Code;
+SSMS es solo para SQL Server):
+```bash
+# 1. Tu usuario de Google necesita roles/cloudsql.client (Owner/Editor ya lo incluyen)
+gcloud auth application-default login
+# 2. Túnel local (descargar cloud-sql-proxy de la documentación de Cloud SQL)
+cloud-sql-proxy <PROYECTO>:us-central1:finanzas-pg --port 5433
+# 3. La contraseña está dentro del secreto (formato postgresql://usuario:CONTRASEÑA@/finanzas_db?host=…)
+gcloud secrets versions access latest --secret=database-url
+# 4. En el cliente: host 127.0.0.1, puerto 5433, BD finanzas_db, usuario finanzas_app, la contraseña del paso 3
+```
+Alternativas sin instalar nada: **Cloud SQL Studio** (editor SQL en la consola, pide usuario y contraseña) o
+`gcloud sql connect finanzas-pg --user=finanzas_app`. **Ojo:** `gcloud sql connect` **agrega tu IP pública a las redes
+autorizadas durante 5 minutos**, o sea, abre temporalmente la puerta que aquí está cerrada. Prefiere el proxy. Recuerda que
+la instancia está **apagada de 23:00 a 06:00**.
+
+| | SQL Server del banco (SSMS) | Cloud SQL de este proyecto |
+|---|---|---|
+| ¿Dónde vive? | Servidor en el datacenter o en una nube privada del banco | Servicio gestionado de Google (`us-central1`) |
+| ¿Cómo llegas por red? | Red corporativa / VPN: estar "dentro" ya te acerca al servidor (modelo de **perímetro**) | Por internet, pero solo a través del proxy autenticado (modelo **zero trust**: la red no da confianza) |
+| Firewall | Reglas de red del banco (IP, puertos, segmentos) | Redes autorizadas **vacías**: ninguna IP entra directo |
+| Autenticación | Windows Authentication (Active Directory, Kerberos) o login SQL | **IAM** (para abrir el túnel) **+** usuario/contraseña de PostgreSQL. Opcional: *IAM database authentication* (login con tu cuenta de Google, sin contraseña) |
+| Cifrado | Depende de la configuración (TLS opcional en muchos entornos legados) | TLS obligatorio (`ENCRYPTED_ONLY`); mTLS automático vía proxy |
+| Credenciales | Cuentas personales gestionadas por DBA/AD | Una cuenta de servicio de la app; contraseña aleatoria en Secret Manager |
+| Auditoría | SQL Server Audit, logs de AD | Cloud Audit Logs (quién abrió el túnel) + logs de PostgreSQL |
+| Herramienta | SSMS (T-SQL) | Cualquier cliente PostgreSQL (DBeaver, pgAdmin, psql), Cloud SQL Studio |
+| Si te roban la contraseña | Con acceso a la red, pueden entrar | **No basta**: además necesitan una identidad de Google con `cloudsql.client` en el proyecto |
+
+**Endurecimiento posible (no aplicado aún, ver 4.6):** apagar la IP pública y usar **IP privada** (Private Service Access +
+*Direct VPC egress* en Cloud Run), y/o **IAM database authentication** para eliminar la contraseña.
 
 > 📘 **Para el examen**
 > - Formas de conectar a Cloud SQL: **Cloud SQL Auth Proxy / connectors** (recomendado: IAM + TLS sin gestionar certificados), IP privada (VPC / Private Service Access), IP pública con redes autorizadas.
@@ -243,7 +304,7 @@ condition {
 > - Rol básico (Owner/Editor) < rol predefinido < rol personalizado, en precisión. Evitar roles básicos.
 
 ### 4.2 Secret Manager (`infra-gcp/secrets.tf`)
-Cinco secretos: `database-url`, `session-secret`, `fabric-eventstream-connection-string`, `google-oauth-client-id`, `google-oauth-client-secret`.
+Seis secretos: `database-url`, `session-secret`, `fabric-eventstream-connection-string`, `google-oauth-client-id`, `google-oauth-client-secret` y **`allowed-emails`** (lista de invitados; los correos son datos personales, por eso no van como variable de entorno en claro, que cualquiera con `run.viewer` en el proyecto compartido podría leer).
 - Las **versiones son inmutables**; rotar = crear una versión nueva (Terraform la reemplaza cuando cambia el valor).
 - Replicación **automática** (Google elige las regiones).
 - Si un valor externo aún no existe, se guarda `PENDIENTE` para que el primer `apply` no falle (resuelve el huevo-y-la-gallina del redirect URI de OAuth, que depende de la URL de Cloud Run).
@@ -271,7 +332,8 @@ sequenceDiagram
 
 Piezas: **pool** `github-pool` → **provider** OIDC `https://token.actions.githubusercontent.com` con
 `attribute_mapping` (`google.subject`, `attribute.repository`, `attribute.ref`) y
-`attribute_condition = "assertion.repository == '<owner>/<repo>'"` → binding
+`attribute_condition = "assertion.repository == '<owner>/<repo>' && assertion.ref == 'refs/heads/main'"` (solo la rama
+`main` puede obtener credenciales: un PR o una rama de prueba no pueden desplegar aunque modifiquen el workflow) → binding
 `principalSet://iam.googleapis.com/<pool>/attribute.repository/<owner>/<repo>` con `roles/iam.workloadIdentityUser`.
 
 > 📘 **Para el examen:** WIF reemplaza las llaves de SA (riesgo de filtración, rotación manual). La `attribute_condition` es obligatoria en providers nuevos y es la barrera que impide que **cualquier** repo de GitHub use tu pool. Los pools borrados quedan en *soft delete* 30 días (el ID no se puede reutilizar en ese lapso).
@@ -289,16 +351,39 @@ sequenceDiagram
   U->>A: GET /auth/callback
   A->>G: Intercambia code por tokens (client secret)
   G-->>A: id_token (email, email_verified)
-  Note over A: email == ALLOWED_EMAIL y verificado
+  Note over A: email verificado y en ALLOWED_EMAILS
+  A->>A: upsert en usuarios → usuario_id (si la BD duerme, se resuelve después)
   A-->>U: Cookie de sesión firmada (SESSION_SECRET), 30 días
 ```
+- **Autorización en dos niveles** (`main.py`):
+  - `sesion_actual`: cookie válida **y** correo todavía en la lista. Se revisa **en cada request**, así que quitar a alguien
+    de `allowed-emails` le corta el acceso al iniciar la siguiente instancia, aunque su cookie siga vigente. No toca la BD
+    (sirve de noche para `/api/me` y para la cola offline).
+  - `usuario_actual`: además resuelve el `usuario_id` interno y lo guarda en la cookie firmada. Todas las funciones de
+    `db.py` reciben ese `usuario_id` y lo ponen en el `WHERE`: **el cliente nunca elige de quién son los datos**
+    (prevención de IDOR, *Insecure Direct Object Reference*).
+- Un gasto ajeno responde **404** (no 403) para no revelar que el UUID existe; reutilizar el UUID de otro usuario en un
+  `POST` responde **409** sin devolver datos.
 - Uvicorn corre con `--proxy-headers` para que `request.url_for` genere **https** detrás del balanceador de Cloud Run (si no, el `redirect_uri` sería `http` y Google lo rechaza).
 - Cookie `https_only`, `same_site=lax`. Cualquier otro correo → sesión limpiada y redirección con `?error=denegado`.
+  Cada login empieza con una sesión **nueva** (`session.clear()`), para no arrastrar datos de otra cuenta.
+- **Pantalla de consentimiento de OAuth:** mientras esté en modo *Testing*, Google solo deja entrar a los **usuarios de prueba**
+  (máx. 100) registrados en *Google Auth Platform › Público*. Con los scopes `openid email profile` (no sensibles) se puede
+  pasar a *En producción* sin verificación de Google; aun así, **la lista blanca de la app sigue siendo la barrera real**.
 
 ### 4.5 Modelo de amenazas (resumen)
 | Amenaza | Mitigación |
 |---|---|
-| Acceso de terceros a la app | OAuth + lista blanca de un correo verificado |
+| Acceso de terceros a la app | OAuth + lista blanca de correos verificados, revisada en cada request |
+| Un invitado lee o modifica gastos de otro (IDOR) | `usuario_id` desde la sesión firmada en todos los `WHERE`; 404 para lo ajeno; tests de aislamiento |
+| Un invitado agota el presupuesto de IA | Cuota diaria por usuario (`IA_LIMITE_ESCANEOS_DIA` = 40, `IA_LIMITE_CONSEJOS_DIA` = 10) → 429 |
+| CSRF (otro sitio dispara un `POST` con tu cookie) | `SameSite=Lax` + rechazo de `Origin` ajeno en métodos de escritura + cuerpo JSON (exige *preflight* CORS) |
+| XSS / clickjacking | React escapa por defecto + **CSP** `script-src 'self'` (sin scripts inline) + `frame-ancestors 'none'` + `X-Frame-Options: DENY` |
+| Datos financieros en cachés intermedias | `Cache-Control: no-store` en `/api/*` y `/auth/*` |
+| Correo de los usuarios en la analítica | El evento lleva `usuario_id` (UUID seudónimo); el correo nunca sale de PostgreSQL |
+| Teléfono compartido | La cola offline guarda el correo de la cuenta en cada gasto y solo sincroniza los de la sesión actual |
+| Despliegue con un secreto de sesión débil | La app no arranca si `COOKIE_SECURE` y `SESSION_SECRET` es el de desarrollo o `PENDIENTE` |
+| Cadena de suministro en CI (acción de terceros comprometida) | Acciones fijadas por **SHA** + Dependabot mensual; WIF limitado a `refs/heads/main` |
 | Robo de credenciales de BD | BD sin redes autorizadas; acceso solo vía connector con IAM; contraseña en Secret Manager |
 | Llaves de SA filtradas en CI | No existen: WIF |
 | Escalada en proyecto compartido | Condiciones IAM a la instancia; roles a nivel recurso |
@@ -306,6 +391,36 @@ sequenceDiagram
 | Datos financieros servidos desde caché | Service worker con `/api/*` en **NetworkOnly** |
 | Envío de datos personales a la IA | Consejos con **agregados**; nunca filas individuales |
 | Path traversal en estáticos | Lista blanca de archivos raíz + `os.path.basename` |
+| Descubrimiento de la API | `docs_url`, `redoc_url` y `openapi_url` deshabilitados |
+
+### 4.6 Revisión de seguridad para el lanzamiento (noviembre 2026)
+Revisión hecha antes de abrir la app a amigos y familia. **Aplicado** en el PR de multiusuario:
+
+| # | Hallazgo | Severidad | Estado |
+|---|---|---|---|
+| 1 | Con varios usuarios, ninguna consulta filtraba por dueño (IDOR) | Crítica | ✅ `usuario_id` en todas las lecturas y escrituras + tests |
+| 2 | `POST` idempotente devolvía el gasto existente con ese UUID, aunque fuera de otro | Alta | ✅ 409 sin datos |
+| 3 | Sin cabeceras de seguridad (CSP, HSTS, nosniff, frame-ancestors) | Media | ✅ Middleware `seguridad` |
+| 4 | Sin control de costos de IA por usuario | Media | ✅ Cuota diaria (429) |
+| 5 | `/openapi.json` expuesto | Baja | ✅ Deshabilitado |
+| 6 | WIF aceptaba tokens de cualquier rama del repo | Media | ✅ Solo `refs/heads/main` |
+| 7 | Acciones de GitHub por etiqueta mutable (`@v4`) en un repo público | Media | ✅ SHA + Dependabot |
+| 8 | `npm install` en el Dockerfile (no reproducible) | Baja | ✅ `npm ci` |
+| 9 | Arranque posible con el `SESSION_SECRET` de desarrollo | Media | ✅ Bloqueado al iniciar |
+| 10 | Cola offline compartida entre cuentas del mismo teléfono | Baja | ✅ Separada por correo |
+
+**Recomendaciones pendientes** (decisión de costo/beneficio, no bloquean el lanzamiento):
+
+| Recomendación | Por qué | Costo / esfuerzo |
+|---|---|---|
+| **Mover la app a un proyecto GCP y un tenant de Fabric propios** | Hoy los datos de terceros (amigos y familia) viven en un proyecto **compartido de trabajo** y en un tenant **corporativo** de Fabric. Para datos personales ajenos lo correcto es infraestructura personal | Medio: `terraform apply` en un proyecto nuevo + recrear Eventstream/Eventhouse |
+| **PITR** (*point-in-time recovery*) en Cloud SQL | Con datos de otras personas, restaurar al minuto exacto antes de un error es valioso | +≈ US$ 0.5/mes (logs de transacciones) |
+| **IAM database authentication** | Elimina la contraseña de BD (la app entra con su SA) | Bajo |
+| **IP privada** para Cloud SQL + *Direct VPC egress* | Quita la IP pública por completo | Medio (VPC, PSA) |
+| Exportar / borrar mi cuenta (`DELETE /api/cuenta`) | Derecho de los usuarios a llevarse o eliminar sus datos (Ley 29733 de Perú) | Bajo; el borrado debe emitir `DELETE` a Fabric |
+| Alertas (Cloud Monitoring) de 5xx, 429 y outbox con `intentos > 5` | Enterarse antes que los usuarios | Bajo, capa gratuita |
+| Presupuesto con alertas en Billing | Tope de sorpresa en costos | Gratis |
+| *Cloud Armor* / rate limiting por IP | Abuso de `/auth/login` | Requiere balanceador (≈ US$ 18/mes): no se justifica hoy |
 
 ---
 
@@ -329,11 +444,16 @@ Se autentican con un **token OAuth** de la SA `sql-scheduler` (scope `cloud-plat
 | Cloud SQL `db-f1-micro` (17 h/día) | US$ 5–7 | Apagado nocturno (−29 %) |
 | Disco 10 GB HDD + backups | US$ 1–2 | HDD, 7 backups |
 | Cloud Run | ≈ US$ 0 | Escala a cero, CPU solo en requests, capa gratuita |
-| Secret Manager (5 secretos) | ≈ US$ 0.30 | — |
+| Secret Manager (6 secretos) | ≈ US$ 0.36 | — |
 | Artifact Registry | ≈ US$ 0.10 | Política de limpieza |
 | Cloud Scheduler (2 jobs) | US$ 0 | 3 jobs gratis por cuenta de facturación |
-| Vertex AI Gemini Flash | céntimos | Modelo Flash, imágenes reducidas a 1600 px |
+| Vertex AI Gemini Flash | céntimos por usuario | Modelo Flash, imágenes reducidas a 1600 px, **cuota diaria por usuario** |
 | Bucket de estado | ≈ US$ 0 | Solo 10 versiones antiguas |
+
+**Con 10–20 usuarios** el costo apenas cambia: Cloud SQL ya está pagado (es por hora, no por usuario), Cloud Run sigue
+cerca de la capa gratuita y solo Gemini crece de forma lineal. El peor caso de IA es acotado:
+20 usuarios × 40 escaneos/día × ≈ US$ 0.001 (orden de magnitud por imagen en un modelo Flash; revisar la tabla de precios vigente) ≈ **US$ 0.80/día** como tope teórico, que en la práctica nadie alcanza.
+`max_instance_count = 2` × pool de 4 conexiones = 8 conexiones, bien por debajo del límite de `db-f1-micro` (25).
 
 ---
 
@@ -390,26 +510,30 @@ El backend GCS soporta **bloqueo de estado** nativo (evita dos `apply` simultán
 | Método y ruta | Descripción |
 |---|---|
 | `GET /api/health` | Health check (sin auth) |
-| `GET /api/me` | Usuario de la sesión |
+| `GET /api/me` | Usuario de la sesión (correo, nombre, foto). **No usa la BD** |
 | `GET /api/gastos` | Últimos 50 gastos (+ `fabric_pendiente`); dispara publicación en segundo plano si hay pendientes |
-| `POST /api/gastos` | Crea un gasto; **idempotente por `id`** (`ON CONFLICT DO NOTHING`) |
+| `POST /api/gastos` | Crea un gasto; **idempotente por `id`** (`ON CONFLICT DO NOTHING`); **409** si el UUID es de otro usuario |
 | `PUT /api/gastos/{id}` | Edita; `version + 1` y evento `UPDATE` |
 | `DELETE /api/gastos/{id}` | Borra; evento `DELETE` con el último estado |
 | `GET /api/kpis/mes` | KPIs exactos del mes (PEN/USD) calculados en SQL |
 | `GET /api/por-cobrar` · `POST /api/gastos/{id}/liquidar` | Compartidos pendientes / marcar cobrado |
 | `GET /api/resumen?dias=` | Agregados por categoría, tipo, método, mes y top hormiga |
-| `POST /api/ia/escanear` · `POST /api/ia/consejos` | Gemini |
+| `POST /api/ia/escanear` · `POST /api/ia/consejos` | Gemini; **429** al superar la cuota diaria |
 | `POST /api/fabric/reenviar` | Publicación manual de la outbox |
 
 ### 7.3 Decisiones de diseño
 - **Rutas síncronas (`def`)**: psycopg, confluent-kafka y google-genai son bloqueantes; FastAPI ejecuta las rutas `def` en un *threadpool*. Las únicas `async` son las de Authlib (OAuth).
-- **Errores de dominio → códigos HTTP**: BD apagada → **503** con `codigo: bd_descanso` (la PWA lo usa para encolar); fallo de IA → **502**.
+- **Errores de dominio → códigos HTTP**: BD apagada → **503** con `codigo: bd_descanso` (la PWA lo usa para encolar); fallo de IA → **502**; UUID ajeno → **409**; cuota de IA → **429**; `Origin` ajeno → **403**.
+- **Todas las rutas de datos reciben el usuario por dependencia** (`Usuario = Annotated[dict, Depends(usuario_actual)]`) y pasan `user["id"]` a `db.py`; ninguna función de lectura o escritura existe sin ese parámetro.
+- **Middleware `seguridad`**: rechaza escrituras con `Origin` de otro sitio y agrega CSP, HSTS, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP y `Cache-Control: no-store` en la API.
 - **Validación en dos capas**: Pydantic (`Literal`, `Decimal` con `max_digits`/`decimal_places`, `model_validator` para el split) + `CHECK` en PostgreSQL.
 - **Pool perezoso** (`min_size=0`, `open(wait=False)`): la app arranca aunque la BD esté apagada.
 - **Fechas "de hoy" siempre en `America/Lima`** (el contenedor está en UTC).
 
 ### 7.4 Pruebas (`app/backend/tests/`)
-17 pruebas de integración con **PostgreSQL 16 real** (service container de GitHub Actions): KPIs con 60 gastos (regresión del bug "últimos 50"), idempotencia, versionado CDC, split 50/50, liquidación, reintentos de la outbox con fallos simulados, enums inválidos, rutas desconocidas. La autenticación se sustituye con `app.dependency_overrides`.
+Pruebas de integración con **PostgreSQL 16 real** (service container de GitHub Actions): KPIs con 60 gastos (regresión del bug "últimos 50"), idempotencia, versionado CDC, split 50/50, liquidación, reintentos de la outbox con fallos simulados, enums inválidos, rutas desconocidas.
+`test_multiusuario.py`: lista blanca, aislamiento de lecturas y KPIs, intentos de editar/borrar/liquidar lo ajeno (404 y **sin eventos**), UUID ajeno (409), `usuario_id` seudónimo en el evento, migración *expand → backfill → contract*, cuota de IA (429), cabeceras de seguridad y CSRF por `Origin`.
+Solo se sustituye `sesion_actual` (`app.dependency_overrides`, el usuario se elige con una cabecera de prueba): `usuario_actual` y el alta en `usuarios` corren de verdad.
 
 ---
 
@@ -457,6 +581,8 @@ sequenceDiagram
   end
 ```
 No se usa la Background Sync API porque **iOS no la soporta**.
+Cada gasto encolado guarda el correo de la cuenta (`_email`); `listar` y `sincronizar` filtran por la cuenta de la sesión,
+así que en un teléfono compartido nadie envía como propios los gastos de otro.
 
 ---
 
@@ -507,6 +633,7 @@ sequenceDiagram
 ```json
 {
   "id": "2940d927-…",              // UUID del gasto (clave de partición)
+  "usuario_id": "7c1e…",           // dueño: UUID seudónimo (nunca el correo). Nuevo, aditivo
   "op_type": "INSERT",             // INSERT | UPDATE | DELETE
   "version": 1,                    // crece con cada cambio del gasto
   "version_timestamp": "2026-11-08T07:12:12-05:00",
@@ -519,6 +646,8 @@ sequenceDiagram
 }
 ```
 Cambios aditivos (campos opcionales) mantienen `schema_version`; los cambios que rompen lo incrementan. Los eventos v1 (sin `op_type`) siguen siendo válidos: Silver los normaliza como `INSERT` versión 1.
+`usuario_id` es **aditivo** (los consumidores antiguos lo ignoran), por eso `schema_version` sigue en 2. **Seudonimización:**
+en Fabric se puede analizar por usuario sin saber quién es; la tabla que une UUID ↔ correo solo existe en PostgreSQL.
 
 ### 10.4 Kafka sobre el Custom Endpoint de Fabric (Event Hubs)
 | Parámetro de librdkafka | Valor |
@@ -559,7 +688,7 @@ flowchart LR
   B -->|"update policy<br/>fn_gastos_silver()<br/>IsTransactional=true"| S[("Silver<br/>gastos_silver<br/>tipado, v1→v2, monto real")]
   S -->|"materialized view<br/>arg_max(version_timestamp, *) by id"| G[("Gold<br/>gastos_ultima_version")]
   G --> F["fn_gastos_actuales()<br/>sin DELETE + USD→PEN (lookup tipo_cambio)"]
-  F --> K["fn_kpis_mes()<br/>fn_gasto_diario()"]
+  F --> K["fn_kpis_mes(usuario)<br/>fn_gasto_diario(dias, usuario)"]
   S -.->|OneLake availability| OL[("Delta Parquet")]
 ```
 
@@ -568,7 +697,11 @@ flowchart LR
 | Bronze | `raw_gastos` | Tal cual llega; retención 10 años; **no se transforma** |
 | Silver | `gastos_silver` + `fn_gastos_silver()` | Descarta filas sin `id`; normaliza `op_type`, `version`; tipa fechas; calcula `monto_real` y `por_cobrar` |
 | Gold | `gastos_ultima_version` (MV) | Última versión por `id` (resuelve duplicados *at-least-once* y desorden); excluye `DELETE` |
-| Consumo | `fn_gastos_actuales`, `fn_kpis_mes`, `fn_gasto_diario` | Conversión a PEN con `tipo_cambio`; anomalías con media móvil 30 d (`make-series` + `series_fir`) |
+| Consumo | `fn_gastos_actuales`, `fn_kpis_mes`, `fn_gasto_diario` | Conversión a PEN con `tipo_cambio`; dueño (`usuario_id`) con `lookup` a su último evento; KPIs **por usuario**; anomalías con media móvil 30 d (`make-series` + `series_fir`) |
+
+**¿Por qué el dueño se resuelve en `fn_gastos_actuales` y no en la vista materializada?** La MV `arg_max(version_timestamp, *)`
+fijó su esquema al crearse; agregarle una columna exige recrearla (con *backfill*). Como el dueño de un gasto **nunca cambia**,
+basta un `lookup` al último evento que trae `usuario_id`: cero recreaciones y el script sigue siendo idempotente.
 
 **Deduplicación CDC** (la idea central):
 ```kql
@@ -643,6 +776,23 @@ Rama `feat/*` → PR (tests) → merge a `main` (tests + deploy). Infraestructur
 
 ---
 
+### 12.3 Lanzamiento multiusuario (orden de despliegue)
+El orden importa porque el contrato de evento cambió y la migración emite un `UPDATE` por cada gasto existente:
+
+| Paso | Quién | Comando / lugar | Por qué en este orden |
+|---|---|---|---|
+| 1 | Tú | `desplegar_kql.ps1 -Entorno test` y luego `-Entorno prd` | Bronze/Silver deben tener la columna `usuario_id` **antes** de que lleguen los `UPDATE` de la migración |
+| 2 | Tú | Agregar correos en `allowed_emails` (`terraform.tfvars`) → `terraform plan` → `apply` | Crea el secreto `allowed-emails`, la variable de entorno y endurece WIF. Si el plan toca Cloud Run, aplicar **antes** del merge ([15.5](#155-plan-guardado-y-despliegues-concurrentes)) |
+| 3 | Tú | *Google Auth Platform › Público*: agregar a los invitados como usuarios de prueba (o publicar la app) | Sin esto, Google rechaza el login antes de llegar a la app |
+| 4 | CI | Merge del PR → deploy | Al primer request con la BD encendida, la migración asigna tus gastos y emite sus `UPDATE` |
+| 5 | Tú | `99_verificacion.kql`, consulta 8 | `sin_dueno` debe ser 0 |
+
+**Invitar o quitar a alguien después:** editar `allowed_emails` → `terraform apply`. El secreto se lee al iniciar cada
+instancia: el cambio rige en la próxima instancia (escala a cero, así que suele ser en minutos) o al instante con una
+revisión nueva. Los datos de quien sale **no se borran**.
+
+---
+
 ## 13. Mapa de certificaciones
 
 | Certificación | Temas de este proyecto | Secciones |
@@ -654,6 +804,9 @@ Rama `feat/*` → PR (tests) → merge a `main` (tests + deploy). Infraestructur
 | **Microsoft DP-700 – Fabric Data Engineer** | Eventstream, Eventhouse, KQL, update policies, materialized views, OneLake, workspaces, Git/deployment pipelines, service principals | 10, 11 |
 | **Microsoft DP-600 – Fabric Analytics Engineer** | Gold, Direct Lake, modelo semántico sobre Delta | 11.2 |
 | **HashiCorp Terraform Associate** | Workflow, estado remoto, migración, lifecycle, for_each/dynamic, sensitive, planes guardados | 6 |
+
+➡️ **Práctica guiada:** la carpeta [`siguientes-pasos/`](../siguientes-pasos/README.md) trae mini proyectos manuales para ACE,
+PDE y DP-700, con la comparación de las rutas **SQL → Gold** en GCP y en Fabric.
 
 ---
 
@@ -739,6 +892,26 @@ Git integration **versiona** un workspace contra una rama; los Deployment pipeli
 Se ejecutan en varios entornos y en cada despliegue; deben converger al mismo estado sin fallar ni duplicar datos (`create-merge`, `create-or-alter`, `ifnotexists`, backfills condicionados).
 </details>
 
+<details><summary><b>17.</b> Una instancia de Cloud SQL tiene IP pública pero ninguna red autorizada. ¿Quién puede conectarse?</summary>
+
+Nadie directamente por IP. Solo a través del **Cloud SQL Auth Proxy / connectors**, que exigen una identidad con `roles/cloudsql.client` (IAM) y luego el usuario/contraseña de la BD. `gcloud sql connect` funciona porque **agrega tu IP temporalmente** a las redes autorizadas.
+</details>
+
+<details><summary><b>18.</b> Tu API recibe <code>PUT /gastos/{id}</code> y hace <code>UPDATE … WHERE id = :id</code>. Con varios usuarios, ¿qué vulnerabilidad hay y cómo se corrige?</summary>
+
+**IDOR** (*Insecure Direct Object Reference*): cualquiera que conozca un id ajeno lo modifica. Se corrige con `WHERE id = :id AND usuario_id = :usuario_de_la_sesión`, tomando el usuario del servidor (sesión firmada), nunca del cuerpo, y respondiendo 404.
+</details>
+
+<details><summary><b>19.</b> ¿Cómo evitas que un PR o una rama cualquiera de tu repo obtenga credenciales de despliegue vía WIF?</summary>
+
+Con la `attribute_condition` del provider (`assertion.ref == 'refs/heads/main'`) o restringiendo el binding `principalSet` a un atributo mapeado (`attribute.ref`). Para aprobación humana, usar *environments* de GitHub y `assertion.environment`.
+</details>
+
+<details><summary><b>20.</b> Quieres analizar en Fabric el gasto por persona sin enviar datos personales. ¿Qué técnica usas?</summary>
+
+**Seudonimización**: enviar un identificador estable sin significado (UUID) y mantener la tabla que lo une con el correo solo en el sistema origen. Sigue siendo dato personal según la ley (es reversible por quien tiene la tabla), pero reduce mucho el riesgo en la plataforma analítica.
+</details>
+
 ---
 
 ## 15. Lecciones aprendidas (incidentes reales)
@@ -783,7 +956,10 @@ Las capturas a 412 px salían cortadas: Chromium en Windows tiene un ancho míni
 | **At-least-once** | Garantía de entrega en la que un mensaje puede llegar más de una vez, pero nunca se pierde |
 | **CDC** | Change Data Capture: propagar inserciones, actualizaciones y borrados de una fuente |
 | **Gasto hormiga** | Gasto pequeño, frecuente y prescindible |
+| **CSP** | Content Security Policy: cabecera que dice al navegador de qué orígenes puede cargar scripts, estilos, imágenes, etc. |
+| **IDOR** | Insecure Direct Object Reference: acceder a un recurso ajeno cambiando su id en la petición |
 | **Idempotencia** | Repetir una operación produce el mismo resultado que hacerla una vez |
+| **Seudonimización** | Reemplazar un identificador personal (correo) por uno sin significado (UUID), guardando la correspondencia aparte |
 | **Medallion** | Capas Bronze (crudo), Silver (limpio) y Gold (negocio) |
 | **Outbox** | Tabla de eventos escrita en la misma transacción que el cambio de negocio |
 | **PWA** | Progressive Web App: web instalable, con service worker y soporte offline |

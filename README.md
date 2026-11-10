@@ -1,6 +1,6 @@
 # 💸 Mis Gastos
 
-**App web personal para registrar gastos en segundos desde el celular, entender a dónde va el dinero y recibir consejos de ahorro con IA.**
+**App web para registrar gastos en segundos desde el celular, entender a dónde va el dinero y recibir consejos de ahorro con IA.**
 Cada gasto se guarda en una base de datos en Google Cloud y viaja en tiempo real a Microsoft Fabric para analítica.
 
 <p align="center">
@@ -92,7 +92,9 @@ Si no hay internet, o la base de datos está en su horario de descanso, el gasto
 Para ahorrar costos, la base de datos está **encendida de 6:00 a. m. a 11:00 p. m. (hora de Lima)**. Fuera de ese horario puedes seguir registrando gastos: se guardan en el teléfono hasta la mañana.
 
 ### 🔒 Privacidad y acceso
-- Inicio de sesión con **Google**, restringido a **un único correo autorizado**.
+- Inicio de sesión con **Google**, **solo por invitación** (amigos y familia en una lista blanca).
+- **Cada cuenta ve únicamente sus propios gastos.** En la analítica (Fabric) cada persona aparece como un identificador anónimo, nunca con su correo.
+- La administración técnica de la app tiene acceso a la base de datos: no registres información que no quieras compartir con ella.
 - La conexión es cifrada y no hay contraseñas guardadas en el código.
 - La IA recibe la foto que escaneas (para leerla) y totales agregados (para los consejos). Nada más.
 
@@ -128,6 +130,7 @@ flowchart LR
 <p align="center"><a href="docs/diagramas/arquitectura.png"><img src="docs/diagramas/arquitectura.png" width="820" alt="Diagrama de arquitectura"></a></p>
 
 Arquitectura completa, decisiones de diseño y guía de estudio para certificaciones en **[docs/ARQUITECTURA.md](docs/ARQUITECTURA.md)**.
+Laboratorios para practicar por tu cuenta en **[siguientes-pasos/](siguientes-pasos/README.md)**.
 
 ---
 
@@ -143,4 +146,5 @@ infra-gcp/      Infraestructura como código (Terraform) en Google Cloud
 fabric/         Scripts KQL (Medallion) y documentación de Microsoft Fabric
 .github/        CI/CD con GitHub Actions
 docs/           Documentación técnica e imágenes
+siguientes-pasos/  Laboratorios manuales para ACE, PDE y DP-700 (incluye la comparación de rutas SQL → Gold)
 ```
