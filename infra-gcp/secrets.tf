@@ -13,6 +13,8 @@ locals {
     FABRIC_EVENTSTREAM_CONNECTION_STRING = coalesce(var.fabric_eventstream_connection_string, "PENDIENTE")
     GOOGLE_OAUTH_CLIENT_ID               = coalesce(var.google_oauth_client_id, "PENDIENTE")
     GOOGLE_OAUTH_CLIENT_SECRET           = coalesce(var.google_oauth_client_secret, "PENDIENTE")
+    # Lista blanca: dueño + invitados (correos = datos personales → secreto, no env var en claro)
+    ALLOWED_EMAILS = join(",", distinct([for e in concat([var.allowed_email], var.allowed_emails) : lower(trimspace(e))]))
   }
 }
 

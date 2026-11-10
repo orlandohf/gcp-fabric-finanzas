@@ -1,7 +1,9 @@
 # Copiar a terraform.tfvars (NO se commitea)
 project_id    = "mi-proyecto-gcp"
 region        = "us-central1"
-allowed_email = "tu-correo@gmail.com"
+allowed_email = "tu-correo@gmail.com"   # dueño/administrador
+# Invitados (amigos y familia); se guardan en Secret Manager. Agregar/quitar = editar y terraform apply
+allowed_emails = ["amigo@gmail.com", "familia@gmail.com"]
 github_repo   = "<usuario>/gcp-fabric-finanzas"
 
 # Opcionales en el primer apply (si van vacíos se guarda "PENDIENTE"):

@@ -10,8 +10,15 @@ variable "region" {
 }
 
 variable "allowed_email" {
-  description = "Único correo autorizado para entrar a la app (ALLOWED_EMAIL)."
+  description = "Correo del dueño/administrador (ALLOWED_EMAIL). Sus gastos previos al multiusuario se le asignan."
   type        = string
+}
+
+variable "allowed_emails" {
+  description = "Invitados (amigos y familia) que pueden entrar. Se guarda en Secret Manager (ALLOWED_EMAILS), no en una variable de entorno visible."
+  type        = list(string)
+  default     = []
+  sensitive   = true
 }
 
 variable "github_repo" {

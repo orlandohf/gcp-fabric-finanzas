@@ -1,0 +1,15 @@
+# Actualizaciones de dependencias (repo público: acciones fijadas por SHA, Dependabot las mantiene al día)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    groups: { acciones: { patterns: ["*"] } }
+  - package-ecosystem: pip
+    directory: /app/backend
+    schedule: { interval: monthly }
+    groups: { python: { patterns: ["*"] } }
+  - package-ecosystem: npm
+    directory: /app/frontend
+    schedule: { interval: monthly }
+    groups: { frontend: { patterns: ["*"] } }

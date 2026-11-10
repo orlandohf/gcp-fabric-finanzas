@@ -29,5 +29,9 @@ gastos_silver
 gastos_ultima_version
 | summarize vigentes = countif(op_type != "DELETE"), borrados = countif(op_type == "DELETE")
 
-// 7. KPIs del mes (deben coincidir con /api/kpis/mes de la app, en PEN)
+// 7. KPIs del mes por usuario (cada fila debe coincidir con /api/kpis/mes de esa cuenta, en PEN)
 fn_kpis_mes()
+
+// 8. Multiusuario: gastos vigentes sin dueño (deben ser 0 tras el despliegue que asigna el dueño original)
+fn_gastos_actuales()
+| summarize sin_dueno = countif(isempty(usuario_id)), usuarios = dcountif(usuario_id, isnotempty(usuario_id)), gastos = count()
