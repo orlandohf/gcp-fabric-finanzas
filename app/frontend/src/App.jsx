@@ -42,12 +42,13 @@ function Login({ error }) {
           <li>🐜 Detecta tus gastos hormiga</li>
           <li>🤝 Lleva la cuenta de lo compartido</li>
         </ul>
-        {error === "denegado" && <p className="alert">Esta cuenta no tiene acceso.</p>}
+        {error === "denegado" && <p className="alert">Tu correo aún no está invitado. Pídele acceso a quien te compartió la app.</p>}
         {error === "oauth" && <p className="alert">No se pudo iniciar sesión. Intenta otra vez.</p>}
         <a className="btn blanco block grande" href="/auth/login">
           <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
           Entrar con Google
         </a>
+        <p className="login-legal">Acceso solo por invitación. Cada cuenta ve únicamente sus propios gastos. A la IA solo llegan la foto que escaneas y tus totales agregados.</p>
       </div>
     </div>
   );
@@ -171,7 +172,7 @@ function Panel({ user }) {
   const cerrarHoja = useCallback(() => setHoja(null), []);
 
   const recargar = useCallback(async () => {
-    setEnCola(await cola.listar().catch(() => []));
+    setEnCola(await cola.listar(user.email).catch(() => []));
     try {
       const [g, k] = await Promise.all([api("/api/gastos"), api("/api/kpis/mes")]);
       setGastos(g); setKpis(k); setBdDisponible(true);
@@ -180,13 +181,13 @@ function Panel({ user }) {
       setBdDisponible(false);
       setGastos((prev) => prev ?? []);
     }
-  }, []);
+  }, [user.email]);
 
   const sincronizarCola = useCallback(async () => {
-    const r = await sincronizar((g) => api("/api/gastos", { method: "POST", body: JSON.stringify(g) }));
+    const r = await sincronizar((g) => api("/api/gastos", { method: "POST", body: JSON.stringify(g) }), user.email);
     if (r?.enviados) setAviso({ tipo: "ok", texto: `Se sincronizaron ${r.enviados} gasto${r.enviados > 1 ? "s" : ""} guardados en el teléfono ✓` });
     await recargar();
-  }, [recargar]);
+  }, [recargar, user.email]);
 
   useEffect(() => {
     sincronizarCola();
@@ -230,8 +231,8 @@ function Panel({ user }) {
       return true;
     } catch (e) {
       if (esReintentable(e)) {
-        await cola.agregar(gasto);
-        setEnCola(await cola.listar());
+        await cola.agregar(gasto, user.email);
+        setEnCola(await cola.listar(user.email));
         setHoja(null);
         setAviso({ tipo: "warn", texto: e.status === undefined
           ? "Sin conexión: lo guardé en tu teléfono y se enviará solo."

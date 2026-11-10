@@ -20,6 +20,13 @@ Cloud Run (outbox) ──Kafka──▶ Eventstream es_finanzas_gcp ──(Proce
 | ¿Quién envía datos? | Eventos sintéticos / pruebas manuales | Cloud Run producción (`FABRIC_ENTORNO=prd`) |
 | ¿Quién cambia los ítems? | Tú, en el portal | **Solo** el pipeline (CI/CD) |
 
+## Multiusuario (usuario_id)
+Desde la versión para amigos y familia, cada evento trae `usuario_id` (UUID seudónimo; el correo nunca sale de PostgreSQL).
+`raw_gastos` y `gastos_silver` lo agregan **al final** con `.create-merge`; Gold lo resuelve en `fn_gastos_actuales()` con un
+`lookup` (la vista materializada no se recrea). **Desplegar el KQL antes que la app**, y verificar con la consulta 8 de
+`99_verificacion.kql` (`sin_dueno = 0`). Si `usuario_id` llega vacío en Bronze con la columna ya creada, revisar el destino
+Eventhouse del Eventstream (mapeo de campos).
+
 ## Lecciones aprendidas (no repetir)
 - El destino Eventhouse del Eventstream crea `raw_gastos` con **fechas como `string`** y columnas de sistema
   (`EventProcessedUtcTime`, `PartitionId`, `EventEnqueuedUtcTime`). Bronze se respeta tal cual; Silver tipa.

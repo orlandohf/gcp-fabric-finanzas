@@ -41,7 +41,8 @@
     pen_por_unidad: real,
     monto_real_pen: real,
     encolado_en: datetime,
-    ingestado_en: datetime
+    ingestado_en: datetime,
+    usuario_id: string        // al final: .create-merge agrega columnas al final y la update policy exige el mismo orden
 )
 
 .alter table gastos_silver folder "silver"
@@ -79,7 +80,8 @@ fn_gastos_silver() {
               pen_por_unidad    = tasa,
               monto_real_pen    = round(real_ * tasa, 2),
               encolado_en       = EventEnqueuedUtcTime,
-              ingestado_en      = now()
+              ingestado_en      = now(),
+              usuario_id
 }
 
 // Update policy: cada fila nueva en Bronze se transforma y se escribe en Silver en la misma transacción

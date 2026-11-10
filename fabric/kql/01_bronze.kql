@@ -5,7 +5,7 @@
 // Idempotente: se puede re-ejecutar en TEST y PRD.
 // =====================================================================
 
-// Esquema v1 (creado por el Eventstream) + campos v2 de la outbox (op_type, version, ...).
+// Esquema v1 (creado por el Eventstream) + campos v2 de la outbox (op_type, version, ...) + usuario_id (multiusuario).
 // .create-merge solo agrega lo que falte; los tipos de las columnas existentes deben coincidir.
 .create-merge table raw_gastos (
     id: string,
@@ -28,7 +28,8 @@
     version_timestamp: string,
     schema_version: int,
     monto_propio: real,
-    liquidado: bool
+    liquidado: bool,
+    usuario_id: string   // UUID seudónimo del dueño (nunca el correo); vacío en eventos previos al multiusuario
 )
 
 .alter table raw_gastos docstring "Eventos crudos de gastos desde Fabric Eventstream (append-only, contrato v1 y v2)"

@@ -120,7 +120,7 @@ resource "google_cloud_run_v2_service" "app" {
   ]
 }
 
-# Acceso público: la autorización la hace la app con Google OAuth + ALLOWED_EMAIL
+# Acceso público: la autorización la hace la app con Google OAuth + lista blanca (ALLOWED_EMAILS)
 resource "google_cloud_run_v2_service_iam_member" "public" {
   name     = google_cloud_run_v2_service.app.name
   location = var.region

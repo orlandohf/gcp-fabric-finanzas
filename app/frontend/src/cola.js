@@ -23,9 +23,10 @@ async function tx(modo, fn) {
   });
 }
 
+// Cada gasto en cola recuerda de qué cuenta es: en un teléfono compartido, otra cuenta no lo envía como suyo
 export const cola = {
-  agregar: (gasto) => tx("readwrite", (s) => s.put({ ...gasto, encolado_en: new Date().toISOString() })),
-  listar: () => tx("readonly", (s) => s.getAll()),
+  agregar: (gasto, email) => tx("readwrite", (s) => s.put({ ...gasto, _email: email, encolado_en: new Date().toISOString() })),
+  listar: async (email) => (await tx("readonly", (s) => s.getAll())).filter((g) => !g._email || g._email === email),
   quitar: (id) => tx("readwrite", (s) => s.delete(id)),
 };
 
@@ -35,14 +36,14 @@ export const esReintentable = (err) => err.status === undefined || err.status ==
 let sincronizando = false;
 
 /** Envía los gastos en cola. Devuelve {enviados, restantes}. */
-export async function sincronizar(enviar) {
+export async function sincronizar(enviar, email) {
   if (sincronizando) return null;
   sincronizando = true;
   let enviados = 0;
   try {
-    const pendientes = (await cola.listar()).sort((a, b) => a.encolado_en.localeCompare(b.encolado_en));
+    const pendientes = (await cola.listar(email)).sort((a, b) => a.encolado_en.localeCompare(b.encolado_en));
     for (const g of pendientes) {
-      const { encolado_en: _omitido, ...gasto } = g;
+      const { encolado_en: _omitido, _email: _cuenta, ...gasto } = g;
       try {
         await enviar(gasto);
         await cola.quitar(g.id);
@@ -53,7 +54,7 @@ export async function sincronizar(enviar) {
         console.warn("Gasto descartado de la cola por error de validación", g, err);
       }
     }
-    return { enviados, restantes: (await cola.listar()).length };
+    return { enviados, restantes: (await cola.listar(email)).length };
   } finally {
     sincronizando = false;
   }

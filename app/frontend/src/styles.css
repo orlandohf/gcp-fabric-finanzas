@@ -439,6 +439,7 @@ input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
 .login p { margin: 0; opacity: .9; }
 .login-puntos { list-style: none; padding: 0; margin: 6px 0 8px; display: grid; gap: 8px; text-align: left; }
 .login-puntos li { background: rgb(255 255 255 / .12); border-radius: 12px; padding: 11px 14px; }
+.login-legal { margin: 4px 0 0; font-size: .78rem; opacity: .8; line-height: 1.4; }
 .logo {
   width: 64px; height: 64px; margin: 0 auto; border-radius: 20px; display: grid; place-items: center;
   background: #fff; color: #0f766e; font-weight: 800; font-size: 1.4rem; box-shadow: 0 10px 30px rgb(0 0 0 / .2);
