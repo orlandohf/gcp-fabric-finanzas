@@ -805,8 +805,8 @@ revisión nueva. Los datos de quien sale **no se borran**.
 | **Microsoft DP-600 – Fabric Analytics Engineer** | Gold, Direct Lake, modelo semántico sobre Delta | 11.2 |
 | **HashiCorp Terraform Associate** | Workflow, estado remoto, migración, lifecycle, for_each/dynamic, sensitive, planes guardados | 6 |
 
-➡️ **Práctica guiada:** la carpeta [`siguientes-pasos/`](../siguientes-pasos/README.md) trae mini proyectos manuales para ACE,
-PDE y DP-700, con la comparación de las rutas **SQL → Gold** en GCP y en Fabric.
+➡️ **Práctica guiada:** los proyectos de laboratorio para ACE, PDE y DP-700 (incluida la comparación de rutas
+**SQL → Gold** en GCP y en Fabric) se mantienen fuera de este repositorio.
 
 ---
 

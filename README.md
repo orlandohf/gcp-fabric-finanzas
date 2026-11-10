@@ -130,7 +130,6 @@ flowchart LR
 <p align="center"><a href="docs/diagramas/arquitectura.png"><img src="docs/diagramas/arquitectura.png" width="820" alt="Diagrama de arquitectura"></a></p>
 
 Arquitectura completa, decisiones de diseño y guía de estudio para certificaciones en **[docs/ARQUITECTURA.md](docs/ARQUITECTURA.md)**.
-Laboratorios para practicar por tu cuenta en **[siguientes-pasos/](siguientes-pasos/README.md)**.
 
 ---
 
@@ -146,5 +145,4 @@ infra-gcp/      Infraestructura como código (Terraform) en Google Cloud
 fabric/         Scripts KQL (Medallion) y documentación de Microsoft Fabric
 .github/        CI/CD con GitHub Actions
 docs/           Documentación técnica e imágenes
-siguientes-pasos/  Laboratorios manuales para ACE, PDE y DP-700 (incluye la comparación de rutas SQL → Gold)
 ```

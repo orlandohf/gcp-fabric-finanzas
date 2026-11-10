@@ -30,3 +30,6 @@ infra-gcp/backend.hcl
 .claude/
 CLAUDE.md
 fabric/entornos.local.json
+
+# Material de estudio personal (vive solo en el repo privado)
+siguientes-pasos/
